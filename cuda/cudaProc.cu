@@ -146,20 +146,19 @@ namespace gimage {
 	* @param numCols the number of columns int he input image.
 	* @param blurSize the size of the blur. This must be odd. Note that the blur filter will be square.
 	*/
-	void GIMAGE_EXPORT gaussianBlur(uint16_t *input, uint16_t *output, int numRows, int numCols, int blurSize) {
+	void GIMAGE_EXPORT gaussianBlur(uint16_t *input, uint16_t *output, float sigma, int numRows, int numCols, int blurSize) {
 		if (blurSize % 2 == 0) {
 			throw(std::exception("Blue size must be odd."));
 		}
 		else {
 
 			//first calculate the filter. 
-			const float blurKernelSigma = 2.;
 			float *h_filter = new float[blurSize*blurSize];
 			float filterSum = 0.f;
 
 			for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
 				for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
-					float filterValue = expf(-(float)(c * c + r * r) / (2.f * blurKernelSigma * blurKernelSigma));
+					float filterValue = expf(-(float)(c * c + r * r) / (2.f * sigma * sigma));
 					h_filter[(r + blurSize / 2) * blurSize + c + blurSize / 2] = filterValue;
 					filterSum += filterValue;
 				}
@@ -175,6 +174,7 @@ namespace gimage {
 
 			//select the device
 			int device = selectDevice();
+			checkCudaErrors(cudaSetDevice(device));
 			struct cudaDeviceProp properties;
 			cudaGetDeviceProperties(&properties, device);
 
@@ -245,6 +245,7 @@ namespace gimage {
 		
 		//select the device
 		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
 		struct cudaDeviceProp properties;
 		cudaGetDeviceProperties(&properties, device);
 
@@ -302,6 +303,63 @@ namespace gimage {
 		checkCudaErrors(cudaFree(d_in));
 		checkCudaErrors(cudaFree(d_out));
 		checkCudaErrors(cudaFree(d_LUT));
+	}
+
+	void GIMAGE_EXPORT cannyEdgeDetector(uint16_t *input, uint16_t *output, int numRows, int numCols,
+		float sigma, uint16_t lowerThresh, uint16_t upperThresh) {
+
+		//set the device. 
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+
+		//run gaussian blur first. 
+		float sigma = 1.4f;
+		gaussianBlur(input, output, sigma, numRows, numCols, 5);
+
+		//create Sobel kernels
+		int *k_gx = new int[9];
+		int *k_gy = new int[9];
+		k_gx[0] = -1; k_gx[1] = 0; k_gx[2] = 1;
+		k_gx[3] = -2; k_gx[4] = 0; k_gx[5] = 2;
+		k_gx[6] = -1; k_gx[7] = 0; k_gx[8] = 1;
+
+		k_gy[0] = 1; k_gy[1] = 2; k_gy[2] = 1;
+		k_gy[3] = 0; k_gy[4] = 0; k_gy[5] = 0;
+		k_gy[6] = -1; k_gy[7] = -2; k_gy[8] = -1;
+
+		//create device copies of the sobel kernels.
+		int* d_kgx;
+		int *d_kgy;
+		checkCudaErrors(cudaMalloc(&d_kgx, sizeof(int) * 9));
+		checkCudaErrors(cudaMalloc(&d_kgy, sizeof(int) * 9));
+		checkCudaErrors(cudaMemcpy(d_kgx, k_gx, sizeof(int) * 9, cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMemcpy(d_kgy, k_gy, sizeof(int) * 9, cudaMemcpyHostToDevice));
+
+
+		//allocate all our arrays. 
+		double *d_gx;
+		double *d_gy;
+		double *d_theta;
+		checkCudaErrors(cudaMalloc(&d_gx, sizeof(double)*numRows*numCols));
+		checkCudaErrors(cudaMalloc(&d_gy, sizeof(double)*numRows*numCols));
+		checkCudaErrors(cudaMalloc(&d_theta, sizeof(double)*numRows*numCols));
+
+		//free up used memory. 
+		checkCudaErrors(cudaFree(d_gx));
+		checkCudaErrors(cudaFree(d_gy));
+		checkCudaErrors(cudaFree(d_theta));
+		checkCudaErrors(cudaFree(d_kgx));
+		checkCudaErrors(cudaFree(d_kgy));
+
+		//free cpu memory too. 
+		free(k_gx);
+		free(k_gy);
+
 	}
 }
 

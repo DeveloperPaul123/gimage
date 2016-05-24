@@ -14,7 +14,7 @@ TEST(gimage, gaussian__Test) {
 			rawImg[i*input.cols + j] = input.at<uint16_t>(i, j);
 		}
 	}
-	gimage::gaussianBlur(rawImg, outputImg, input.rows, input.cols, blurSize);
+	gimage::gaussianBlur(rawImg, outputImg, 1.9f, input.rows, input.cols, blurSize);
 	cv::Mat result(input.rows, input.cols, CV_16U, outputImg, cv::Mat::AUTO_STEP);
 	cv::Size s(blurSize, blurSize);
 	cv::Mat cvOut;
