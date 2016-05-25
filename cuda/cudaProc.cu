@@ -1,4 +1,5 @@
 #include "gimage.h"
+#include "array.h"
 #include "timer.h"
 /**
 * Helper function to select the proper CUDA device based on memory.
@@ -30,6 +31,13 @@ int selectDevice() {
 	else {
 		return 0;
 	}
+}
+
+template<typename T>
+__global__ void testKernel(T* a1, T* a2, T* out, const int size) {
+	static_assert(std::is_arithmetic<T>::value, "Only arithmetic types allowed.");
+	int id = threadIdx.x;
+	if (id < size)	out[id] = a1[id] + a2[id];
 }
 
 /**
@@ -196,8 +204,10 @@ namespace gimage {
 			int maxThreadsPerBlock = properties.maxThreadsPerBlock;
 			int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
 #if PRINT_INFO
-			std::cout << "using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
+			std::cout << "GPU: " << properties.name << std::endl;
+			std::cout << "Using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
 			std::cout << "Max threads per block: " << properties.maxThreadsPerBlock << std::endl;
+			std::cout << "Max grid size: " << properties.maxGridSize[0] << std::endl;
 			std::cout << "Threads per block " << threadsPerBlock << std::endl;
 #endif		
 			//specify block size. 
@@ -209,7 +219,9 @@ namespace gimage {
 			dim3 grid_size;
 			grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
 			grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
-
+#if PRINT_INFO
+			std::cout << "Grid size: (" << grid_size.x << " , " << grid_size.y << ")" << std::endl;
+#endif	
 			GpuTimer t;
 			t.Start();
 			//call the kernal.
@@ -359,6 +371,51 @@ namespace gimage {
 		free(k_gx);
 		free(k_gy);
 
+	}
+
+	void GIMAGE_EXPORT test(Matrix a, Matrix b, Matrix out, int size) {
+		switch (a.type()) {
+		case TYPE_UINT16: {
+			uint16_t *d_a;
+			uint16_t *d_b;
+			uint16_t *d_out;
+			checkCudaErrors(cudaMalloc(&d_a, sizeof(uint16_t)*size));
+			checkCudaErrors(cudaMalloc(&d_b, sizeof(uint16_t)*size));
+			checkCudaErrors(cudaMalloc(&d_out, sizeof(uint16_t)*size));
+
+			checkCudaErrors(cudaMemcpy(d_a, (uint16_t*)a.data<uint16_t>(), sizeof(uint16_t)*size, cudaMemcpyHostToDevice));
+			checkCudaErrors(cudaMemcpy(d_b, b.data<uint16_t>(), sizeof(uint16_t)*size, cudaMemcpyHostToDevice));
+
+			testKernel << <1, size >> >(d_a, d_b, d_out, size);
+
+			checkCudaErrors(cudaMemcpy(out.data<uint16_t>(), d_out, sizeof(uint16_t)*size, cudaMemcpyDeviceToHost));
+
+			checkCudaErrors(cudaFree(d_a));
+			checkCudaErrors(cudaFree(d_b));
+			checkCudaErrors(cudaFree(d_out));
+		}
+			break;
+		case TYPE_UCHAR: {
+			uint8_t *d_a;
+			uint8_t *d_b;
+			uint8_t *d_out;
+			checkCudaErrors(cudaMalloc(&d_a, sizeof(uint8_t)*size));
+			checkCudaErrors(cudaMalloc(&d_b, sizeof(uint8_t)*size));
+			checkCudaErrors(cudaMalloc(&d_out, sizeof(uint8_t)*size));
+
+			checkCudaErrors(cudaMemcpy(d_a, (uint8_t*)a.data<uint8_t>(), sizeof(uint8_t)*size, cudaMemcpyHostToDevice));
+			checkCudaErrors(cudaMemcpy(d_b, b.data<uint8_t>(), sizeof(uint8_t)*size, cudaMemcpyHostToDevice));
+
+			testKernel << <1, size >> >(d_a, d_b, d_out, size);
+
+			checkCudaErrors(cudaMemcpy(out.data<uint8_t>(), d_out, sizeof(uint8_t)*size, cudaMemcpyDeviceToHost));
+
+			checkCudaErrors(cudaFree(d_a));
+			checkCudaErrors(cudaFree(d_b));
+			checkCudaErrors(cudaFree(d_out));
+		}
+			break;
+		}
 	}
 }
 
