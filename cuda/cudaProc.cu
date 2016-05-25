@@ -318,7 +318,6 @@ namespace gimage {
 		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
 
 		//run gaussian blur first. 
-		float sigma = 1.4f;
 		gaussianBlur(input, output, sigma, numRows, numCols, 5);
 
 		//create Sobel kernels
