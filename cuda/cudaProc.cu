@@ -44,7 +44,8 @@ int selectDevice() {
 * @param numCols number of cols in the image.
 * @param blurSize the size of the blur.
 */
-__global__ void gaussian(uint16_t *d_in, uint16_t *d_out, const float* const filter, int numRows, int numCols, int blurSize) {
+template<typename T>
+__global__ void gaussian(T *d_in, T *d_out, const float* const filter, int numRows, int numCols, int blurSize) {
 	//so filter width defines width of the filter.
 	assert(blurSize % 2 == 1); //filter size should be odd.
 	//get row and column in blcok
@@ -67,8 +68,8 @@ __global__ void gaussian(uint16_t *d_in, uint16_t *d_out, const float* const fil
 			int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
 			int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
 			//make sure we don't index rows and columns that don't exist. 
-			int image_r = rowCompare <= static_cast<uint16_t>(numRows - 1) ? rowCompare : static_cast<uint16_t>(numRows - 1);
-			int image_c = colCompare <= static_cast<uint16_t>(numCols - 1) ? colCompare : static_cast<uint16_t>(numCols - 1);
+			int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
+			int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
 
 			float image_value = static_cast<float>(d_in[image_r * numCols + image_c]);
 			float filter_value = filter[(filter_r + blurSize / 2) * blurSize + filter_c + blurSize / 2];
@@ -77,7 +78,7 @@ __global__ void gaussian(uint16_t *d_in, uint16_t *d_out, const float* const fil
 		}
 	}
 	//set the output value. 
-	d_out[offset] = result;
+	d_out[offset] = static_cast<T>(result);
 }
 
 
@@ -121,17 +122,18 @@ __global__ void generateLUT(int* d_LUT, const int window, const int level, const
 * @param level the level to use in the calculation.
 * @param levels the number of levels in the image and LUT
 */
-__global__ void cudaWindowLevel(uint16_t* input, uint16_t *output, int *d_LUT, int numRows, int numCols, int window, int level, int levels) {
+template<typename T>
+__global__ void cudaWindowLevel(T* input, T *output, int *d_LUT, int numRows, int numCols, int window, int level, int levels) {
 	//get row and column in blcok
 	int r = threadIdx.x + blockIdx.x*blockDim.x;
 	int c = threadIdx.y + blockIdx.y*blockDim.y;
 	//get unique point in image by finding position in grid.
 	int index = r + c*blockDim.x*gridDim.x;
 	if (index < numRows*numCols) {
-		uint16_t in = input[index];
+		T in = input[index];
 		if (in < levels) {
 			int out = d_LUT[in];
-			output[index] = (uint16_t)out;
+			output[index] = (T)out;
 		}	
 	}
 }
@@ -186,7 +188,6 @@ __global__ void cannyEdge(uint16_t *d_in, uint16_t *d_out, double* d_theta, int*
 * Namespace for all gimage functions.
 */
 namespace gimage {
-	
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.
 	* @param input the input image
@@ -197,7 +198,7 @@ namespace gimage {
 	*/
 	void GIMAGE_EXPORT gaussianBlur(uint16_t *input, uint16_t *output, float sigma, int numRows, int numCols, int blurSize) {
 		if (blurSize % 2 == 0) {
-			throw(std::exception("Blue size must be odd."));
+			throw(std::exception("Blur size must be odd."));
 		}
 		else {
 
@@ -285,6 +286,7 @@ namespace gimage {
 			free(h_filter);
 		}
 	}
+
 	/**
 	* Performs the look up table method of window and leveling on the given image and stores the result in out.
 	* @param input the input image.
@@ -294,39 +296,32 @@ namespace gimage {
 	* @param window the window to use in the calculation.
 	* @param level the level to use in the calculation.
 	*/
-	void GIMAGE_EXPORT windowAndLevel(uint16_t *input, uint16_t *out, int numRows, int numCols, int window, int level) {
+	void GIMAGE_EXPORT windowAndLevel(Array& input, Array& out, int numRows, int numCols, int window, int level) {
 		
+		//assert the same type.
+		assert(input.getType() == out.getType());
+		//assert same size. 
+		assert(input.size() == out.size());
 		//select the device
 		int device = selectDevice();
 		checkCudaErrors(cudaSetDevice(device));
 		struct cudaDeviceProp properties;
 		cudaGetDeviceProperties(&properties, device);
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
 
 		int levels = (1 << 16) - 1;
 		int* d_LUT;
 		checkCudaErrors(cudaMalloc(&d_LUT, sizeof(int)*levels));
 		checkCudaErrors(cudaMemset(d_LUT, 0, sizeof(int)*levels));
 
-		//now we can filter the image. 
-		int size = numRows*numCols*sizeof(uint16_t);
-		uint16_t *d_in;
-		uint16_t *d_out;
-
-		//allocate image memory.
-		checkCudaErrors(cudaMalloc(&d_in, size));
-		checkCudaErrors(cudaMalloc(&d_out, size));
-		checkCudaErrors(cudaMemcpy(d_in, input, size, cudaMemcpyHostToDevice));
-
-		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
-		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
-
 		int lutBlocks = levels / maxThreadsPerBlock;
 
-		GpuTimer t;
-		t.Start();
-		generateLUT <<<lutBlocks, maxThreadsPerBlock >>> (d_LUT, window, level, levels);
-		t.Stop();
-		float msLut = t.Elapsed();
+		GpuTimer timer;
+		timer.Start();
+		generateLUT << <lutBlocks, maxThreadsPerBlock >> > (d_LUT, window, level, levels);
+		timer.Stop();
+		float msLut = timer.Elapsed();
 #if PRINT_INFO
 		printf("LUT calc used %d blocks\n", lutBlocks);
 		printf("LUT kernel took %f ms\n", msLut);
@@ -341,21 +336,39 @@ namespace gimage {
 		grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
 		grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
 
-		GpuTimer winT;
-		winT.Start();
-		cudaWindowLevel << <grid_size, block_size >> >(d_in, d_out, d_LUT, numRows, numCols, window, level, levels);
-		winT.Stop();
-		float ms = winT.Elapsed();
-#if PRINT_INFO
-		printf("WindowLevel kernel took %f ms\n", ms);
-#endif
-		//copy back data. 
-		checkCudaErrors(cudaMemcpy(out, d_out, size, cudaMemcpyDeviceToHost));
+		//now actually apply the window and leveling. 
+		gimage::Type t = input.getType();
+		switch (t) {
+		case TYPE_UINT16:
+			//now we can filter the image. 
+			int size = input.totalSize();
+			uint16_t *d_in;
+			uint16_t *d_out;
 
-		//clean up. 
-		checkCudaErrors(cudaFree(d_in));
-		checkCudaErrors(cudaFree(d_out));
-		checkCudaErrors(cudaFree(d_LUT));
+			//allocate image memory.
+			checkCudaErrors(cudaMalloc(&d_in, size));
+			checkCudaErrors(cudaMalloc(&d_out, size));
+			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(input.data()), size, cudaMemcpyHostToDevice));
+
+			GpuTimer winT;
+			winT.Start();
+			cudaWindowLevel << <grid_size, block_size >> >(d_in, d_out, d_LUT, numRows, numCols, window, level, levels);
+			winT.Stop();
+			float ms = winT.Elapsed();
+#if PRINT_INFO
+			printf("WindowLevel kernel took %f ms\n", ms);
+#endif
+			//copy back data. 
+			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(out.data()), d_out, size, cudaMemcpyDeviceToHost));
+
+			//clean up. 
+			checkCudaErrors(cudaFree(d_in));
+			checkCudaErrors(cudaFree(d_out));
+			checkCudaErrors(cudaFree(d_LUT));
+			break;
+		}
+	
+
 	}
 
 	/**
