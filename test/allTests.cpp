@@ -55,46 +55,4 @@ TEST(gimage, windowLevel_Test) {
 	cv::waitKey(0);
 }
 
-TEST(gimage, input_array_test) {
-	size_t size = 3;
-	gimage::InputArray<uint16_t> a(size);
-	for (int i = 0; i < size; i++) {
-		a.setData((uint16_t)i, i);
-	}
-	EXPECT_EQ(a.get(0), 0);
-	EXPECT_EQ(a.get(1), 1);
-}
-
-TEST(gimage, matrix_test) {
-	gimage::MatrixUint16 a(3);
-	for (int i = 0; i < 3; i++) {
-		a.setData((uint16_t)i, i);
-	}
-	EXPECT_EQ(a.get(0), 0);
-	EXPECT_EQ(a.get(1), 1);
-	EXPECT_EQ(a.get(2), 2);
-}
-
-TEST(gimage, matrix_test_two) {
-	gimage::MatrixUint8 a(2);
-	for (int i = 0; i < 2; i++) {
-		a.setData((uint8_t)i * 2, i);
-	}
-	EXPECT_EQ(a.get(0), 0);
-	EXPECT_EQ(a.get(1), 2);
-}
-
-TEST(gimage, test_template_kernel) {
-	gimage::MatrixUint8 a(2);
-	gimage::MatrixUint8 b(2);
-	gimage::MatrixUint8 out(2);
-	for (int i = 0; i < 2; i++) {
-		a.setData((uint8_t)i * 2, i);
-		b.setData((uint8_t)i * 3, i);
-	}
-
-	gimage::test(a, b, out, 2);
-
-	EXPECT_EQ(out.get(0), a.get(0) + b.get(0));
-}
 

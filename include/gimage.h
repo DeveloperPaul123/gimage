@@ -32,7 +32,6 @@ namespace gimage {
 	void GIMAGE_EXPORT windowAndLevel(uint16_t *input, uint16_t *out, int numRows, int numCols, int window, int level);
 	void GIMAGE_EXPORT cannyEdgeDetector(uint16_t *input, uint16_t *output, int numRows, int numCols,
 										float sigma, uint16_t lowerThresh, uint16_t upperThresh);
-	void GIMAGE_EXPORT test(Matrix first, Matrix second, Matrix out, int size);
 }
 
 #endif //GIMAGE_H

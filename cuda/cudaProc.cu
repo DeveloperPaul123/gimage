@@ -1,6 +1,8 @@
 #include "gimage.h"
 #include "array.h"
 #include "timer.h"
+
+#define PI 3.14159265359
 /**
 * Helper function to select the proper CUDA device based on memory.
 * @return int the device index to use.
@@ -31,13 +33,6 @@ int selectDevice() {
 	else {
 		return 0;
 	}
-}
-
-template<typename T>
-__global__ void testKernel(T* a1, T* a2, T* out, const int size) {
-	static_assert(std::is_arithmetic<T>::value, "Only arithmetic types allowed.");
-	int id = threadIdx.x;
-	if (id < size)	out[id] = a1[id] + a2[id];
 }
 
 /**
@@ -139,6 +134,52 @@ __global__ void cudaWindowLevel(uint16_t* input, uint16_t *output, int *d_LUT, i
 			output[index] = (uint16_t)out;
 		}	
 	}
+}
+
+__global__ void cannyEdge(uint16_t *d_in, uint16_t *d_out, double* d_theta, int* k_gx, int* k_gy, int numRows, int numCols) {
+	int r = threadIdx.x + blockIdx.x*blockDim.x;
+	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	//get unique point in image by finding position in grid.
+	int index = r + c*blockDim.x*gridDim.x;
+	extern __shared__ uint16_t intermediate[];
+
+	if (index > numRows*numCols) {
+		return;
+	}
+
+	int x_res, y_res;
+	int kernelSize = 9;
+	//apply the filter. 
+	for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
+		for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
+			//Find the global image position for this filter position
+			//clamp to boundary of the image
+			int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
+			int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
+			//make sure we don't index rows and columns that don't exist. 
+			int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
+			int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
+
+			int image_value = static_cast<int>(d_in[image_r * numCols + image_c]);
+			int filter_x = k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2];
+			int filter_y = k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2];
+			//add filter value to result.
+			x_res += image_value*filter_x;
+			y_res += image_value*filter_y;
+		}
+	}
+
+	intermediate[index] = x_res + y_res;
+	double angle = atan2f(y_res, x_res) * (180.0 / PI);
+	double correctAngle = round(angle / 45.0) * 45.0;
+	d_theta[index] = correctAngle;
+
+	//need all threads to be done before proceeding. 
+	__syncthreads();
+
+	double a = d_theta[index];
+	//now need to compare values that are in the same direction. 
+
 }
 
 /**
@@ -317,6 +358,16 @@ namespace gimage {
 		checkCudaErrors(cudaFree(d_LUT));
 	}
 
+	/**
+	* Performs canny edge detection on the input and outputs an image with only the edges in the output. 
+	* @param input the input image. 
+	* @param output the output image (edges only).
+	* @param numRows number of rows in the image.
+	* @param numCols the number of the columns in the image.
+	* @param sigma sigma for the gaussian blur.
+	* @param uint16_t lowerThresh lower threshold for the canny edge detector.
+	* @param uint16_t upterThresh upper threshold for the canny edge detector. 
+	*/
 	void GIMAGE_EXPORT cannyEdgeDetector(uint16_t *input, uint16_t *output, int numRows, int numCols,
 		float sigma, uint16_t lowerThresh, uint16_t upperThresh) {
 
@@ -371,51 +422,6 @@ namespace gimage {
 		free(k_gx);
 		free(k_gy);
 
-	}
-
-	void GIMAGE_EXPORT test(Matrix a, Matrix b, Matrix out, int size) {
-		switch (a.type()) {
-		case TYPE_UINT16: {
-			uint16_t *d_a;
-			uint16_t *d_b;
-			uint16_t *d_out;
-			checkCudaErrors(cudaMalloc(&d_a, sizeof(uint16_t)*size));
-			checkCudaErrors(cudaMalloc(&d_b, sizeof(uint16_t)*size));
-			checkCudaErrors(cudaMalloc(&d_out, sizeof(uint16_t)*size));
-
-			checkCudaErrors(cudaMemcpy(d_a, (uint16_t*)a.data<uint16_t>(), sizeof(uint16_t)*size, cudaMemcpyHostToDevice));
-			checkCudaErrors(cudaMemcpy(d_b, b.data<uint16_t>(), sizeof(uint16_t)*size, cudaMemcpyHostToDevice));
-
-			testKernel << <1, size >> >(d_a, d_b, d_out, size);
-
-			checkCudaErrors(cudaMemcpy(out.data<uint16_t>(), d_out, sizeof(uint16_t)*size, cudaMemcpyDeviceToHost));
-
-			checkCudaErrors(cudaFree(d_a));
-			checkCudaErrors(cudaFree(d_b));
-			checkCudaErrors(cudaFree(d_out));
-		}
-			break;
-		case TYPE_UCHAR: {
-			uint8_t *d_a;
-			uint8_t *d_b;
-			uint8_t *d_out;
-			checkCudaErrors(cudaMalloc(&d_a, sizeof(uint8_t)*size));
-			checkCudaErrors(cudaMalloc(&d_b, sizeof(uint8_t)*size));
-			checkCudaErrors(cudaMalloc(&d_out, sizeof(uint8_t)*size));
-
-			checkCudaErrors(cudaMemcpy(d_a, (uint8_t*)a.data<uint8_t>(), sizeof(uint8_t)*size, cudaMemcpyHostToDevice));
-			checkCudaErrors(cudaMemcpy(d_b, b.data<uint8_t>(), sizeof(uint8_t)*size, cudaMemcpyHostToDevice));
-
-			testKernel << <1, size >> >(d_a, d_b, d_out, size);
-
-			checkCudaErrors(cudaMemcpy(out.data<uint8_t>(), d_out, sizeof(uint8_t)*size, cudaMemcpyDeviceToHost));
-
-			checkCudaErrors(cudaFree(d_a));
-			checkCudaErrors(cudaFree(d_b));
-			checkCudaErrors(cudaFree(d_out));
-		}
-			break;
-		}
 	}
 }
 
