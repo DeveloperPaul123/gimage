@@ -9,15 +9,17 @@
 TEST(gimage, gaussian__Test) {
 	int blurSize = 57;
 	cv::Mat input = cv::imread("test.tif", CV_16U);
-	uint16_t *rawImg = new uint16_t[input.rows*input.cols];
-	uint16_t *outputImg = new uint16_t[input.rows*input.cols];
+	gimage::MatrixU16 rawImage(input.rows*input.cols);
+	gimage::MatrixU16 output(input.rows*input.cols);
 	for (size_t i = 0; i < input.rows; ++i) {
 		for (size_t j = 0; j < input.cols; ++j){
-			rawImg[i*input.cols + j] = input.at<uint16_t>(i, j);
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData(value, i*input.cols + j);
 		}
 	}
-	gimage::gaussianBlur(rawImg, outputImg, 1.9f, input.rows, input.cols, blurSize);
-	cv::Mat result(input.rows, input.cols, CV_16U, outputImg, cv::Mat::AUTO_STEP);
+	gimage::gaussianBlur(rawImage, output, 1.9f, input.rows, input.cols, blurSize);
+	cv::Mat result(input.rows, input.cols, CV_16U, 
+		static_cast<uint16_t*>(output.data()), cv::Mat::AUTO_STEP);
 	cv::Size s(blurSize, blurSize);
 	cv::Mat cvOut;
 	cv::GaussianBlur(input, cvOut, s, 2.0, 2.0);
@@ -34,7 +36,6 @@ TEST(gimage, gaussian__Test) {
 	cv::imshow("Input", input);
 	cv::imshow("Reference", cvOut);
 	cv::imshow("gimage", result);
-	cv::imshow("Difference", dif);
 	cv::waitKey(0);
 	EXPECT_NEAR(diffSum, 0, 30);
 }
@@ -66,4 +67,21 @@ TEST(gimage, window_level_Test) {
 	cv::waitKey(0);
 }
 
+TEST(gimage, canny_test) {
+	cv::Mat input = cv::imread("test.tif", CV_16U);
+	gimage::MatrixU16 rawImage(input.rows*input.cols);
+	gimage::MatrixU16 out(input.rows*input.cols);
+	for (size_t i = 0; i < input.rows; ++i) {
+		for (size_t j = 0; j < input.cols; ++j){
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData(value, i*input.cols + j);
+		}
+	}
+	gimage::cannyEdgeDetector(rawImage, out, input.rows, input.cols, 1.4f, 20, 300);
+	cv::Mat result(input.rows, input.cols, CV_16U,
+		static_cast<uint16_t*>(out.data()), cv::Mat::AUTO_STEP);
+	cv::imshow("Input", input);
+	cv::imshow("Output", result);
+	cv::waitKey(0);
+}
 

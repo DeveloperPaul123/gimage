@@ -138,19 +138,32 @@ __global__ void cudaWindowLevel(T* input, T *output, int *d_LUT, int numRows, in
 	}
 }
 
-__global__ void cannyEdge(uint16_t *d_in, uint16_t *d_out, double* d_theta, int* k_gx, int* k_gy, int numRows, int numCols) {
+/**
+* Calculates the gradient values and directions for a given input. Stores angles in d_theta and the gradient in d_gradient
+* @param d_in the input image.
+* @param d_gradient the array to store the gradient values.
+* @param d_theta array to store our gradient directions. 
+* @param k_gx the sobel operator in x (created on host)
+* @param k_gy the sobel operator in y (created on host)
+* @param numRows the number of rows in the image.
+* @param numCols the number of columns in the image. 
+*/
+template<typename T>
+__global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* k_gx, int* k_gy, int numRows, int numCols) {
+	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
 	int r = threadIdx.x + blockIdx.x*blockDim.x;
 	int c = threadIdx.y + blockIdx.y*blockDim.y;
 	//get unique point in image by finding position in grid.
-	int index = r + c*blockDim.x*gridDim.x;
-	extern __shared__ uint16_t intermediate[];
+	int index = c + r*blockDim.x*gridDim.x;
 
-	if (index > numRows*numCols) {
+	if (index >= numRows*numCols) {
 		return;
 	}
 
-	int x_res, y_res;
-	int kernelSize = 9;
+	//run convolution on the image with the sobel filters. 
+	float x_res = 0.0f;
+	float y_res = 0.0f;
+	int kernelSize = 3;
 	//apply the filter. 
 	for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
 		for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
@@ -162,26 +175,30 @@ __global__ void cannyEdge(uint16_t *d_in, uint16_t *d_out, double* d_theta, int*
 			int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
 			int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
 
-			int image_value = static_cast<int>(d_in[image_r * numCols + image_c]);
-			int filter_x = k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2];
-			int filter_y = k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2];
+			float image_value = static_cast<float>(d_in[image_r * numCols + image_c]);
+			float filter_x = static_cast<float>(k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
+			float filter_y = static_cast<float>(k_gy[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
 			//add filter value to result.
 			x_res += image_value*filter_x;
 			y_res += image_value*filter_y;
 		}
 	}
 
-	intermediate[index] = x_res + y_res;
-	double angle = atan2f(y_res, x_res) * (180.0 / PI);
-	double correctAngle = round(angle / 45.0) * 45.0;
+	//store the gradient magnitude. 
+	d_gradient[index] = static_cast<T>(sqrtf(powf(x_res, 2.0f) + powf(y_res, 2.0f)));
+	double angle = (atan2f(y_res, x_res)) / PI * 180.0;
+	int correctAngle;
+	/* Convert actual edge direction to approximate value */
+	if (((angle < 22.5) && (angle > -22.5)) || (angle > 157.5) || (angle < -157.5))
+		correctAngle = 0;
+	if (((angle > 22.5) && (angle < 67.5)) || ((angle < -112.5) && (angle > -157.5)))
+		correctAngle = 45;
+	if (((angle > 67.5) && (angle < 112.5)) || ((angle < -67.5) && (angle > -112.5)))
+		correctAngle = 90;
+	if (((angle > 112.5) && (angle < 157.5)) || ((angle < -22.5) && (angle > -67.5)))
+		correctAngle = 135;
+	//store the angle. 
 	d_theta[index] = correctAngle;
-
-	//need all threads to be done before proceeding. 
-	__syncthreads();
-
-	double a = d_theta[index];
-	//now need to compare values that are in the same direction. 
-
 }
 
 /**
@@ -196,40 +213,40 @@ namespace gimage {
 	* @param numCols the number of columns int he input image.
 	* @param blurSize the size of the blur. This must be odd. Note that the blur filter will be square.
 	*/
-	void GIMAGE_EXPORT gaussianBlur(uint16_t *input, uint16_t *output, float sigma, int numRows, int numCols, int blurSize) {
-		if (blurSize % 2 == 0) {
-			throw(std::exception("Blur size must be odd."));
+	void GIMAGE_EXPORT gaussianBlur(Array& input, Array& output, float sigma, int numRows, int numCols, int blurSize) {
+		//blur size must be odd. 
+		assert(blurSize % 2 == 1);
+		//first calculate the filter. 
+		float *h_filter = new float[blurSize*blurSize];
+		float filterSum = 0.f;
+
+		for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
+			for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
+				float filterValue = expf(-(float)(c * c + r * r) / (2.f * sigma * sigma));
+				h_filter[(r + blurSize / 2) * blurSize + c + blurSize / 2] = filterValue;
+				filterSum += filterValue;
+			}
 		}
-		else {
 
-			//first calculate the filter. 
-			float *h_filter = new float[blurSize*blurSize];
-			float filterSum = 0.f;
+		float normalizationFactor = 1.f / filterSum;
 
-			for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
-				for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
-					float filterValue = expf(-(float)(c * c + r * r) / (2.f * sigma * sigma));
-					h_filter[(r + blurSize / 2) * blurSize + c + blurSize / 2] = filterValue;
-					filterSum += filterValue;
-				}
+		for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
+			for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
+				h_filter[(r + blurSize / 2) * blurSize + c + blurSize / 2] *= normalizationFactor;
 			}
+		}
 
-			float normalizationFactor = 1.f / filterSum;
-
-			for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
-				for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
-					h_filter[(r + blurSize / 2) * blurSize + c + blurSize / 2] *= normalizationFactor;
-				}
-			}
-
-			//select the device
-			int device = selectDevice();
-			checkCudaErrors(cudaSetDevice(device));
-			struct cudaDeviceProp properties;
-			cudaGetDeviceProperties(&properties, device);
-
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		//get image type.
+		gimage::Type t = input.getType();
+		switch (t) {
+		case TYPE_UINT16:
 			//now we can filter the image. 
-			int size = numRows*numCols*sizeof(uint16_t);
+			int size = input.totalSize();
 			uint16_t *d_in;
 			uint16_t *d_out;
 			float *d_filter;
@@ -241,7 +258,7 @@ namespace gimage {
 			//allocate image memory.
 			checkCudaErrors(cudaMalloc(&d_in, size));
 			checkCudaErrors(cudaMalloc(&d_out, size));
-			checkCudaErrors(cudaMemcpy(d_in, input, size, cudaMemcpyHostToDevice));
+			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(input.data()), size, cudaMemcpyHostToDevice));
 
 			int maxThreadsPerBlock = properties.maxThreadsPerBlock;
 			int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
@@ -276,7 +293,7 @@ namespace gimage {
 			cudaDeviceSynchronize();
 			checkCudaErrors(cudaGetLastError());
 
-			checkCudaErrors(cudaMemcpy(output, d_out, size, cudaMemcpyDeviceToHost));
+			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.data()), d_out, size, cudaMemcpyDeviceToHost));
 
 			//clean up
 			checkCudaErrors(cudaFree(d_in));
@@ -284,7 +301,9 @@ namespace gimage {
 			checkCudaErrors(cudaFree(d_filter));
 
 			free(h_filter);
+			break;
 		}
+		
 	}
 
 	/**
@@ -381,8 +400,13 @@ namespace gimage {
 	* @param uint16_t lowerThresh lower threshold for the canny edge detector.
 	* @param uint16_t upterThresh upper threshold for the canny edge detector. 
 	*/
-	void GIMAGE_EXPORT cannyEdgeDetector(uint16_t *input, uint16_t *output, int numRows, int numCols,
-		float sigma, uint16_t lowerThresh, uint16_t upperThresh) {
+	void GIMAGE_EXPORT cannyEdgeDetector(Array& input, Array& output, int numRows, int numCols,
+		float sigma, int lowerThresh, int upperThresh) {
+
+		assert(input.getType() == output.getType());
+		assert(sigma > 0);
+		assert(lowerThresh < upperThresh);
+		assert(lowerThresh > 0 && upperThresh > 0);
 
 		//set the device. 
 		int device = selectDevice();
@@ -390,12 +414,21 @@ namespace gimage {
 		cudaDeviceProp properties;
 		cudaGetDeviceProperties(&properties, device);
 
+		//calculate the threds per block. 
 		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
 		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
 
-		//run gaussian blur first. 
-		gaussianBlur(input, output, sigma, numRows, numCols, 5);
+		//specify block size. 
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		/*
+		* Specify the grid size for the GPU.
+		* Make it generalized, so that the size of grid changes according to the input image size
+		*/
+		dim3 grid_size;
+		grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
+		grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
 
+	
 		//create Sobel kernels
 		int *k_gx = new int[9];
 		int *k_gy = new int[9];
@@ -415,23 +448,40 @@ namespace gimage {
 		checkCudaErrors(cudaMemcpy(d_kgx, k_gx, sizeof(int) * 9, cudaMemcpyHostToDevice));
 		checkCudaErrors(cudaMemcpy(d_kgy, k_gy, sizeof(int) * 9, cudaMemcpyHostToDevice));
 
+		//check the image type.
+		gimage::Type t = input.getType();
+		switch (t) {
+		case TYPE_UINT16://allocate all our arrays. 
+			gimage::MatrixU16 blurred(input.size());
+			//run gaussian blur first. 
+			gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
+			uint16_t *d_gradient;
+			uint16_t *d_in;
+			int *d_theta;
+			checkCudaErrors(cudaMalloc(&d_gradient, input.totalSize()));
+			checkCudaErrors(cudaMalloc(&d_theta, sizeof(int)*numRows*numCols));
+			checkCudaErrors(cudaMalloc(&d_in, input.totalSize()));
+			//copy input image to global memory, use the blurred data. 
+			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(blurred.data()), input.totalSize(), cudaMemcpyHostToDevice));
 
-		//allocate all our arrays. 
-		double *d_gx;
-		double *d_gy;
-		double *d_theta;
-		checkCudaErrors(cudaMalloc(&d_gx, sizeof(double)*numRows*numCols));
-		checkCudaErrors(cudaMalloc(&d_gy, sizeof(double)*numRows*numCols));
-		checkCudaErrors(cudaMalloc(&d_theta, sizeof(double)*numRows*numCols));
+			//call our gradient kernel
+			gradientAndDirection << <grid_size, block_size >> >(d_in, d_gradient, d_theta, d_kgx, d_kgy, numRows, numCols);
+			//for now just testing gradient. 
+			cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.data()), d_gradient, output.totalSize(), cudaMemcpyDeviceToHost));
 
-		//free up used memory. 
-		checkCudaErrors(cudaFree(d_gx));
-		checkCudaErrors(cudaFree(d_gy));
-		checkCudaErrors(cudaFree(d_theta));
+			//free up used memory. 
+			checkCudaErrors(cudaFree(d_in));
+			checkCudaErrors(cudaFree(d_gradient));
+			checkCudaErrors(cudaFree(d_theta));
+			break;
+		}
+		
+		//free our gpu filters. 
 		checkCudaErrors(cudaFree(d_kgx));
 		checkCudaErrors(cudaFree(d_kgy));
 
-		//free cpu memory too. 
+		//free cpu memory. 
 		free(k_gx);
 		free(k_gy);
 

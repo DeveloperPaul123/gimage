@@ -36,7 +36,7 @@ namespace gimage {
 	* @param numCols the number of columns int he input image.
 	* @param blurSize the size of the blur. This must be odd. Note that the blur filter will be square.
 	*/
-	void GIMAGE_EXPORT gaussianBlur(uint16_t *input, uint16_t *output, float sigma, int numRows, int numCols, int blurSize);
+	void GIMAGE_EXPORT gaussianBlur(Array& input, Array& output, float sigma, int numRows, int numCols, int blurSize);
 	/**
 	* Performs the look up table method of window and leveling on the given image and stores the result in out.
 	* @param input the input image.
@@ -57,8 +57,8 @@ namespace gimage {
 	* @param uint16_t lowerThresh lower threshold for the canny edge detector.
 	* @param uint16_t upterThresh upper threshold for the canny edge detector.
 	*/
-	void GIMAGE_EXPORT cannyEdgeDetector(uint16_t *input, uint16_t *output, int numRows, int numCols,
-										float sigma, uint16_t lowerThresh, uint16_t upperThresh);
+	void GIMAGE_EXPORT cannyEdgeDetector(Array& input, Array &output, int numRows, int numCols,
+										float sigma, int lowerThresh, int upperThresh);
 }
 
 #endif //GIMAGE_H
