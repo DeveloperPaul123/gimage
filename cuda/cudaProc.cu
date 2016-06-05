@@ -300,7 +300,7 @@ namespace gimage {
 			checkCudaErrors(cudaFree(d_out));
 			checkCudaErrors(cudaFree(d_filter));
 
-			free(h_filter);
+			delete[] h_filter;
 			break;
 		}
 		
@@ -451,13 +451,14 @@ namespace gimage {
 		//check the image type.
 		gimage::Type t = input.getType();
 		switch (t) {
-		case TYPE_UINT16://allocate all our arrays. 
+		case TYPE_UINT16:
 			gimage::MatrixU16 blurred(input.size());
 			//run gaussian blur first. 
 			gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
 			uint16_t *d_gradient;
 			uint16_t *d_in;
 			int *d_theta;
+			//allocate all our arrays. 
 			checkCudaErrors(cudaMalloc(&d_gradient, input.totalSize()));
 			checkCudaErrors(cudaMalloc(&d_theta, sizeof(int)*numRows*numCols));
 			checkCudaErrors(cudaMalloc(&d_in, input.totalSize()));
@@ -466,8 +467,9 @@ namespace gimage {
 
 			//call our gradient kernel
 			gradientAndDirection << <grid_size, block_size >> >(d_in, d_gradient, d_theta, d_kgx, d_kgy, numRows, numCols);
-			//for now just testing gradient. 
+			//synchronize the device. 
 			cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+			//for now just testing gradient part so copy this result to the output. 
 			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.data()), d_gradient, output.totalSize(), cudaMemcpyDeviceToHost));
 
 			//free up used memory. 
@@ -482,8 +484,8 @@ namespace gimage {
 		checkCudaErrors(cudaFree(d_kgy));
 
 		//free cpu memory. 
-		free(k_gx);
-		free(k_gy);
+		delete[] k_gx;
+		delete[] k_gy;
 
 	}
 }
