@@ -7,14 +7,19 @@
 
 namespace gimage {
 
-	enum Type {
-		TYPE_NONE = 0,
-		TYPE_DOUBLE = 1,
-		TYPE_INT = 2,
-		TYPE_FLOAT = 3,
-		TYPE_UINT16 = 4, 
-		TYPE_UINT8 = 5, 
-		TYPE_LONG = 6
+	enum class MemcpyDirection {
+		HOST_TO_DEVICE,
+		DEVICE_TO_HOST
+	};
+
+	enum class Type {
+		NONE,
+		DOUBLE,
+		INT,
+		FLOAT,
+		UINT16, 
+		UINT8, 
+		LONG
 	};
 
 	/**
@@ -22,11 +27,21 @@ namespace gimage {
 	*/
 	class GIMAGE_EXPORT Array {
 	public:
+
 		/**
-		* Array of a given Type. Type can be NONE (default),
-		* double, int, float, uint16_t and uint8_t
+		* Base array class that holds image and other data. 
+		* @param rows number of rows in the array.
+		* @param cols the number of columns in the array. 
 		*/
-		Array(Type type);
+		Array(int rows, int cols, Type type) {
+			_rows = rows;
+			_cols = cols;
+			_type = type;
+			_size = _rows*_cols;
+		}
+
+		virtual ~Array(){}
+
 		/**
 		* Returns the array's type.
 		* @return Type the array's type.
@@ -37,150 +52,118 @@ namespace gimage {
 		* Get the underlying data of the array. 
 		* @return void* raw data pointer. 
 		*/
-		virtual void* data() = 0;
+		virtual void* hostData() = 0;
+		virtual void* deviceData() = 0;
+
+		/**
+		* Allocate data on the GPU. 
+		* @return void* pointer to the gpu array.
+		*/
+		virtual void gpuAlloc() = 0;
+
+		/**
+		* Free data on the gpu. 
+		*/
+		virtual void gpuFree() = 0;
+
+		/**
+		* Clones data to another array.
+		* @param other the other array to copy data to. 
+		*/
+		virtual void clone(Array& other) = 0;
+
+		/**
+		* Copy data to or from the device (GPU) to or from the host.
+		* @param dir the direction to copy from. 
+		*/
+		virtual void memcpy(MemcpyDirection dir) = 0;
 
 		/**
 		* Total size of the array (i.e. size * sizeof(type))
 		* @return size_t total size of the array.
 		*/
-		virtual size_t totalSize() = 0;
+		virtual int totalSize() = 0;
 
-		/**
-		* Number of elements in the array. 
-		* @return size_t total size. 
-		*/
-		virtual size_t size() = 0;
+		template<typename T>
+		void setData(int row, int col, T value) {
+			assert(row < _rows && col < _cols);
+			static_cast<T*>(hostData())[row*_cols + col] = static_cast<T>(value);
+		}
+
+		template<typename T>
+		T at(int row, int col) {
+			assert(row < _rows && col < _cols);
+			return static_cast<T*>(hostData())[row*_cols + col];
+		}
 
 		/**
 		* Get the number of rows in the array.
 		* @return int the number of rows.
 		*/
-		virtual int rows() = 0;
+		int rows() {
+			return _rows;
+		}
 
 		/**
 		* Get the number of columns in the array.
 		* @return int the number of columns in the array.
 		*/
-		virtual int cols() = 0;
-
-	private:
-		Type _type;
-	};
-
-	/**
-	* Template Matrix class for different data types. 
-	*/
-	template<typename T>
-	class GIMAGE_EXPORT Matrix : public Array {
-	public:
-
-		Matrix(int rows, int columns) : Array(TYPE_NONE){
-			_rows = rows; 
-			_cols = columns;
-			_size = _rows*_cols;
-			allocate(_size);
-		}
-
-		/**
-		* Instantiate matrix of a given size. 
-		* This will allocate memory of type T[size].
-		* @param size the size of the matrix. 
-		*/
-		Matrix(size_t size) : Array(TYPE_NONE) {
-			_size = size;
-			allocate(size);
-		}
-
-		/**
-		* Deconstructor. Deletes the previously allocated memory. 
-		*/
-		~Matrix() {
-			delete[] _data;
-		}
-
-		/**
-		* Get data at a particular row and column. 
-		* @param row the row to look at.
-		* @param col the column to look at. 
-		*/
-		T at(int row, int col) {
-			assert(row < _rows && col < _cols);
-			return _data[row*_cols + col];
-		}
-
-		/**
-		* Returns a pointer to the underlying data. 
-		* @return void* data pointer. 
-		*/
-		virtual void* data() {
-			return static_cast<T*>(getData());
-		}
-
-		virtual int rows() {
-			return _rows;
-		}
-
-		virtual int cols() {
+		int cols() {
 			return _cols;
 		}
-		/**
-		* Gets data from a given index. 
-		*/
-		T get(int index) {
-			return _data[index];
-		}
 
-		/**
-		* Set data at a given index. 
-		*/
-		void setData(T elem, int index) {
-			_data[index] = elem;
-		}
-
-		/**
-		* Returns the total size of this matrix. This includes the size of
-		* the type and the size of the array.
-		* @return size_t total size. 
-		*/
-		virtual size_t totalSize() {
-			return sizeof(T)*_size;
-		}
-
-		/**
-		* Returns the size of the array.
-		* @return size_t the size. 
-		*/
-		virtual size_t size() {
+		int size() {
 			return _size;
 		}
+
 	private:
 		/**
-		* Private get data member for getting the internal data. 
-		* @return T* pointer to internal data. 
+		* Allocate data array on the host. 
+		* @param size the size of the array to allocate. 
 		*/
-		T* getData() {
-			return _data;
-		}
-		
-		/**
-		* Allocate an array of a given size.
-		* @param size_t size the size.
-		*/
-		void allocate(size_t size) {
-			_data = new T[size];
-		}
-		
-		int _cols = 0;
+		virtual void allocate(int size) = 0;
+		Type _type = Type::NONE;
 		int _rows = 0;
-		size_t _size;
-		T* _data;
+		int _cols = 0;
+		int _size = 0;
 	};
 
-	typedef Matrix < double > MatrixD;
-	typedef Matrix<int> MatrixI;
-	typedef Matrix<float> MatrixF;
-	typedef Matrix<long> MatrixL;
-	typedef Matrix<uint16_t> MatrixU16;
-	typedef Matrix<uint8_t> MatrixU8;
+	class GIMAGE_EXPORT DoubleArray : public Array {
+
+	public:
+		DoubleArray(int rows, int cols);
+		~DoubleArray();
+		void* hostData();
+		void* deviceData();
+		void gpuAlloc();
+		void gpuFree();
+		void clone(Array& other);
+		void memcpy(MemcpyDirection dir);
+		int totalSize();
+
+	private:
+		virtual void allocate(int size);
+		double *h_data;
+		double *d_data = NULL;
+	};
+
+	class GIMAGE_EXPORT ArrayUint16 : public Array {
+
+	public:
+		ArrayUint16(int rows, int cols);
+		~ArrayUint16();
+		void* hostData();
+		void* deviceData();
+		void gpuAlloc();
+		void gpuFree();
+		void clone(Array& other);
+		void memcpy(MemcpyDirection dir);
+		int totalSize();
+
+	private:
+		virtual void allocate(int size);
+		uint16_t *h_data;
+		uint16_t *d_data = NULL;
+	};
 }
 #endif

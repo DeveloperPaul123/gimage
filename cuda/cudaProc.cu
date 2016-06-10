@@ -6,6 +6,9 @@
 #define PRINT_INFO 1
 #define checkCudaErrors(val) check( (val), #val, __FILE__, __LINE__)
 
+/**
+* Template function for checking cuda errors. 
+*/
 template<typename T>
 void check(T err, const char* const func, const char* const file, const int line) {
 	if (err != cudaSuccess) {
@@ -15,6 +18,11 @@ void check(T err, const char* const func, const char* const file, const int line
 	}
 }
 
+/**
+* Helper function for cuda memory allocation. Simplifies calls to cudaMalloc.
+* @param d_p device pointer.
+* @param size_t element the number of elements. 
+*/
 template<typename T>
 cudaError_t cudaAlloc(T*& d_p, size_t elements)
 {
@@ -219,6 +227,19 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 	d_theta[index] = correctAngle;
 }
 
+/**
+* Performs non-maximum suppression to further isolate edges during canny edge detection. This will save edges that are local maxima. It will then check 
+* if the value is greater than the upper threshold, between the upper and lower threshold or below the lower threshold. If it is above the upper threshold the value
+* is labeled as definitely being part of an edge. If it is inbetween, it will only be counted as an edge if it is connected to a definite edge, and if it below the lower
+* threhold, it will be discarded.
+* @param d_gradMag device pointer to gradient magnitude array.
+* @param d_theta device pointer to gradient direction array.
+* @param d_out the output array with the final edges. 
+* @param upperThresh the upper threshold to check against.
+* @param lowerThresh the lower threshold to check against. 
+* @param numRows the number of rows in the arrays (should be the same for all).
+* @param numCols the number of columns in the arrays (should be the same for all).
+*/
 template<typename T>
 __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int upperThresh, int lowerThresh, int numRows, int numCols) {
 	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
@@ -238,6 +259,212 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 * Namespace for all gimage functions.
 */
 namespace gimage {
+
+	/**
+	* Return the type of the array. See gimage::Type for possible types. 
+	* @return Type the type of the array.
+	*/
+	Type Array::getType() {
+		return _type;
+	}
+
+	/**
+	* Generic array of doubles.
+	* @param rows number of rows in the array.
+	* @param cols number of columns in the array. 
+	*/
+	DoubleArray::DoubleArray(int rows, int cols) : Array(rows, cols, Type::DOUBLE) {
+		allocate(size());
+	}
+
+	/**
+	* Deallocate all data. 
+	*/
+	DoubleArray::~DoubleArray() {
+		delete[] h_data;
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}
+	}
+
+	/**
+	* Returns a pointer to the host data. 
+	* @return void* host data pointer. Can static_cast this to double*
+	*/
+	void* DoubleArray::hostData() {
+		return h_data;
+	}
+
+	/**
+	* Returns a pointer to the device data array. Note that this array will be NULL
+	* if gpuAlloc() has not been called. 
+	* @return void* device data pointer. Can be static_cast to double*
+	*/
+	void* DoubleArray::deviceData() {
+		return d_data;
+	}
+
+	/**
+	* Allocate data onto the GPU. Note that this does not copy data over to the GPU.
+	*/
+	void DoubleArray::gpuAlloc() {
+		if (!d_data) {
+			checkCudaErrors(cudaAlloc(d_data, size()));
+		}
+	}
+
+	/**
+	* Free GPU data. This function will check to see if the data pointer is
+	* valid first before attempting to free it. It will be set to NULL once 
+	* it is freed from GPU memory.
+	*/
+	void DoubleArray::gpuFree() {
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}	
+	}
+
+	/**
+	* Total size of the array including the size of the type.
+	* @return the size of the array * sizeof(type)
+	*/
+	int DoubleArray::totalSize() {
+		return size() * sizeof(double);
+	}
+
+	/**
+	* Clones host data from this array to the other array.
+	* @param other the array to copy data to. 
+	*/
+	void DoubleArray::clone(Array& other) {
+		assert(other.getType() == getType());
+		assert(other.size() == size());
+		std::memcpy(static_cast<double*>(other.hostData()), 
+			static_cast<double*>(hostData()), totalSize());
+	}
+
+	/**
+	* Copy data to or from the host and/or device. 
+	* @param dir the direction to copy. 
+	*/
+	void DoubleArray::memcpy(MemcpyDirection dir) {
+		if (dir == MemcpyDirection::HOST_TO_DEVICE) {
+			checkCudaErrors(cudaMemcpy(d_data, h_data, totalSize(), cudaMemcpyHostToDevice));
+		}
+		else {
+			checkCudaErrors(cudaMemcpy(h_data, d_data, totalSize(), cudaMemcpyDeviceToHost));
+		}
+	}
+
+	/**
+	* Allocate host memory. 
+	* @param size the size of the data to allocate. 
+	*/
+	void DoubleArray::allocate(int size) {
+		h_data = new double[size];
+	}
+
+	/**
+	* Generic array of unsigned 16 bit integers.
+	* @param rows number of rows in the array.
+	* @param cols number of columns in the array.
+	*/
+	ArrayUint16::ArrayUint16(int rows, int cols) : Array(rows, cols, Type::UINT16) {
+		allocate(size());
+	}
+
+	/**
+	* Deallocate the array and underlying buffers. 
+	*/
+	ArrayUint16::~ArrayUint16() {
+		delete[] h_data;
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}
+	}
+
+	/**
+	* Returns a pointer to the host data.
+	* @return void* host data pointer. Can static_cast this to double*
+	*/
+	void* ArrayUint16::hostData() {
+		return h_data;
+	}
+
+	/**
+	* Returns a pointer to the device data array. Note that this array will be NULL
+	* if gpuAlloc() has not been called.
+	* @return void* device data pointer. Can be static_cast to double*
+	*/
+	void* ArrayUint16::deviceData() {
+		return d_data;
+	}
+
+	/**
+	* Allocate data onto the GPU. Note that this does not copy data over to the GPU.
+	* @return void* device pointer to data. Use static cast to cast this to the proper type. 
+	*/
+	void ArrayUint16::gpuAlloc() {
+		if (!d_data) {
+			checkCudaErrors(cudaAlloc(d_data, size()));
+		}
+	}
+
+	/**
+	* Free GPU data. This function will check to see if the data pointer is
+	* valid first before attempting to free it. It will be set to NULL once
+	* it is freed from GPU memory.
+	*/
+	void ArrayUint16::gpuFree() {
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}	
+	}
+
+	/**
+	* Total size of the array.
+	* @return int the size of the array * sizeof(type)
+	*/
+	int ArrayUint16::totalSize() {
+		return size() * sizeof(uint16_t);
+	}
+
+	/**
+	* Copy data to or from the host and/or device.
+	* @param dir the direction to copy.
+	*/
+	void ArrayUint16::memcpy(MemcpyDirection dir) {
+		if (dir == MemcpyDirection::HOST_TO_DEVICE) {
+			checkCudaErrors(cudaMemcpy(d_data, h_data, totalSize(), cudaMemcpyHostToDevice));
+		}
+		else {
+			checkCudaErrors(cudaMemcpy(h_data, d_data, totalSize(), cudaMemcpyDeviceToHost));
+		}
+	}
+
+	/**
+	* Clones host data from this array to the other array.
+	* @param other the array to copy data to.
+	*/
+	void ArrayUint16::clone(Array& other) {
+		assert(other.getType() == getType());
+		assert(other.size() == size());
+		std::memcpy(static_cast<uint16_t*>(other.hostData()), 
+			static_cast<uint16_t*>(hostData()), totalSize());
+	}
+
+	/**
+	* Allocate host memory.
+	* @param size the size of the data to allocate.
+	*/
+	void ArrayUint16::allocate(int size) {
+		h_data = new uint16_t[size];
+	}
+
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.
 	* @param input the input image
@@ -274,69 +501,80 @@ namespace gimage {
 		checkCudaErrors(cudaSetDevice(device));
 		struct cudaDeviceProp properties;
 		cudaGetDeviceProperties(&properties, device);
+
+		//now we can filter the image. 
+		int size = input.totalSize();
+		float *d_filter;
+		int totalBlurSize = blurSize*blurSize;
+
+		//allocated memory for filter. 
+		checkCudaErrors(cudaAlloc(d_filter, totalBlurSize));
+		checkCudaErrors(cudaMemcpy(d_filter, h_filter, sizeof(float)*totalBlurSize, cudaMemcpyHostToDevice));
+
+		//allocate image memory.
+		input.gpuAlloc();
+		output.gpuAlloc();
+		//copy memory to device. 
+		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+#if PRINT_INFO
+		std::cout << "GPU: " << properties.name << std::endl;
+		std::cout << "Using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
+		std::cout << "Max threads per block: " << properties.maxThreadsPerBlock << std::endl;
+		std::cout << "Max grid size: " << properties.maxGridSize[0] << std::endl;
+		std::cout << "Threads per block " << threadsPerBlock << std::endl;
+#endif		
+		//specify block size. 
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		/*
+		* Specify the grid size for the GPU.
+		* Make it generalized, so that the size of grid changes according to the input image size
+		*/
+		dim3 grid_size;
+		grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
+		grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
+#if PRINT_INFO
+		std::cout << "Grid size: (" << grid_size.x << " , " << grid_size.y << ")" << std::endl;
+#endif	
 		//get image type.
 		gimage::Type t = input.getType();
+		GpuTimer timer;
+		
 		switch (t) {
-		case TYPE_UINT16:
-			//now we can filter the image. 
-			int size = input.totalSize();
-			uint16_t *d_in;
-			uint16_t *d_out;
-			float *d_filter;
-
-			//allocated memory for filter. 
-			checkCudaErrors(cudaMalloc(&d_filter, sizeof(float)*blurSize*blurSize));
-			checkCudaErrors(cudaMemcpy(d_filter, h_filter, sizeof(float)*blurSize*blurSize, cudaMemcpyHostToDevice));
-
-			//allocate image memory.
-			checkCudaErrors(cudaMalloc(&d_in, size));
-			checkCudaErrors(cudaMalloc(&d_out, size));
-			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(input.data()), size, cudaMemcpyHostToDevice));
-
-			int maxThreadsPerBlock = properties.maxThreadsPerBlock;
-			int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
-#if PRINT_INFO
-			std::cout << "GPU: " << properties.name << std::endl;
-			std::cout << "Using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
-			std::cout << "Max threads per block: " << properties.maxThreadsPerBlock << std::endl;
-			std::cout << "Max grid size: " << properties.maxGridSize[0] << std::endl;
-			std::cout << "Threads per block " << threadsPerBlock << std::endl;
-#endif		
-			//specify block size. 
-			dim3 block_size(threadsPerBlock, threadsPerBlock);
-			/*
-			* Specify the grid size for the GPU.
-			* Make it generalized, so that the size of grid changes according to the input image size
-			*/
-			dim3 grid_size;
-			grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
-			grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
-#if PRINT_INFO
-			std::cout << "Grid size: (" << grid_size.x << " , " << grid_size.y << ")" << std::endl;
-#endif	
-			GpuTimer t;
-			t.Start();
+		case Type::UINT16:	
 			//call the kernal.
-			gaussian << <grid_size, block_size >> >(d_in, d_out, d_filter, numRows, numCols, blurSize);
-			t.Stop();
-			float ms = t.Elapsed();
-#if PRINT_INFO
-			printf("Kernel took %f ms\n", ms);
-#endif
-			cudaDeviceSynchronize();
-			checkCudaErrors(cudaGetLastError());
-
-			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.data()), d_out, size, cudaMemcpyDeviceToHost));
-
-			//clean up
-			checkCudaErrors(cudaFree(d_in));
-			checkCudaErrors(cudaFree(d_out));
-			checkCudaErrors(cudaFree(d_filter));
-
-			delete[] h_filter;
+			timer.Start();
+			gaussian << <grid_size, block_size >> >(static_cast<uint16_t*>(input.deviceData()), static_cast<uint16_t*>(output.deviceData()), 
+				d_filter, numRows, numCols, blurSize);
+			timer.Stop();
+			break;
+		case Type::DOUBLE:
+			//call the kernal.
+			timer.Start();
+			gaussian << <grid_size, block_size >> >(static_cast<double*>(input.deviceData()), static_cast<double*>(output.deviceData()),
+				d_filter, numRows, numCols, blurSize);
+			timer.Stop();
 			break;
 		}
-		
+
+		float ms = timer.Elapsed();
+#if PRINT_INFO
+		printf("Kernel took %f ms\n", ms);
+#endif
+		cudaDeviceSynchronize();
+		checkCudaErrors(cudaGetLastError());
+
+		output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+
+		//clean up gpu
+		output.gpuFree();
+		input.gpuFree();
+		checkCudaErrors(cudaFree(d_filter));
+
+		//clean up host
+		delete[] h_filter;	
 	}
 
 	/**
@@ -350,10 +588,12 @@ namespace gimage {
 	*/
 	void GIMAGE_EXPORT windowAndLevel(Array& input, Array& out, int numRows, int numCols, int window, int level) {
 		
-		//assert the same type.
+		//perform assertions
 		assert(input.getType() == out.getType());
-		//assert same size. 
 		assert(input.size() == out.size());
+		assert(input.rows() == out.rows() && input.cols() == out.cols() && input.rows() == numRows && input.cols() == numCols);
+		assert(window > 0 && level > 0);
+
 		//select the device
 		int device = selectDevice();
 		checkCudaErrors(cudaSetDevice(device));
@@ -362,13 +602,16 @@ namespace gimage {
 		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
 		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
 
+		//get number of levels. 
 		int levels = (1 << 16) - 1;
 		int* d_LUT;
-		checkCudaErrors(cudaMalloc(&d_LUT, sizeof(int)*levels));
+		
+		checkCudaErrors(cudaAlloc(d_LUT, levels));
 		checkCudaErrors(cudaMemset(d_LUT, 0, sizeof(int)*levels));
 
 		int lutBlocks = levels / maxThreadsPerBlock;
 
+		//generate the look up table. 
 		GpuTimer timer;
 		timer.Start();
 		generateLUT << <lutBlocks, maxThreadsPerBlock >> > (d_LUT, window, level, levels);
@@ -388,39 +631,38 @@ namespace gimage {
 		grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
 		grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
 
-		//now actually apply the window and leveling. 
+		//allocate device memory.
+		input.gpuAlloc();
+		out.gpuAlloc();
+		//copy host memory to device. 
+		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		//initialize the timer. 
+		GpuTimer winT;
+
 		gimage::Type t = input.getType();
 		switch (t) {
-		case TYPE_UINT16:
-			//now we can filter the image. 
-			int size = input.totalSize();
-			uint16_t *d_in;
-			uint16_t *d_out;
-
-			//allocate image memory.
-			checkCudaErrors(cudaMalloc(&d_in, size));
-			checkCudaErrors(cudaMalloc(&d_out, size));
-			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(input.data()), size, cudaMemcpyHostToDevice));
-
-			GpuTimer winT;
-			winT.Start();
-			cudaWindowLevel << <grid_size, block_size >> >(d_in, d_out, d_LUT, numRows, numCols, window, level, levels);
-			winT.Stop();
-			float ms = winT.Elapsed();
-#if PRINT_INFO
-			printf("WindowLevel kernel took %f ms\n", ms);
-#endif
-			//copy back data. 
-			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(out.data()), d_out, size, cudaMemcpyDeviceToHost));
-
-			//clean up. 
-			checkCudaErrors(cudaFree(d_in));
-			checkCudaErrors(cudaFree(d_out));
-			checkCudaErrors(cudaFree(d_LUT));
-			break;
+			case Type::UINT16:
+				//now actually apply the window and leveling. 
+				winT.Start();
+				cudaWindowLevel << <grid_size, block_size >> >(static_cast<uint16_t*>(input.deviceData()), 
+																static_cast<uint16_t*>(out.deviceData()), 
+																d_LUT, numRows, numCols, window, level, levels);
+				winT.Stop();
+				break;
 		}
-	
 
+		float ms = winT.Elapsed();
+#if PRINT_INFO
+		printf("WindowLevel kernel took %f ms\n", ms);
+#endif
+		//copy back data. 
+		out.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+
+		//clean up. 
+		input.gpuFree();
+		out.gpuFree();
+		checkCudaErrors(cudaFree(d_LUT));
 	}
 
 	/**
@@ -476,40 +718,52 @@ namespace gimage {
 		//create device copies of the sobel kernels.
 		int* d_kgx;
 		int *d_kgy;
-		checkCudaErrors(cudaMalloc(&d_kgx, sizeof(int) * 9));
-		checkCudaErrors(cudaMalloc(&d_kgy, sizeof(int) * 9));
+		checkCudaErrors(cudaAlloc(d_kgx, 9));
+		checkCudaErrors(cudaAlloc(d_kgy, 9));
 		checkCudaErrors(cudaMemcpy(d_kgx, k_gx, sizeof(int) * 9, cudaMemcpyHostToDevice));
 		checkCudaErrors(cudaMemcpy(d_kgy, k_gy, sizeof(int) * 9, cudaMemcpyHostToDevice));
 
 		//check the image type.
 		gimage::Type t = input.getType();
 		switch (t) {
-		case TYPE_UINT16:
-			gimage::MatrixU16 blurred(input.size());
-			//run gaussian blur first. 
-			gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
-			uint16_t *d_gradient;
-			uint16_t *d_in;
-			int *d_theta;
-			//allocate all our arrays. 
-			checkCudaErrors(cudaMalloc(&d_gradient, input.totalSize()));
-			checkCudaErrors(cudaMalloc(&d_theta, sizeof(int)*numRows*numCols));
-			checkCudaErrors(cudaMalloc(&d_in, input.totalSize()));
-			//copy input image to global memory, use the blurred data. 
-			checkCudaErrors(cudaMemcpy(d_in, static_cast<uint16_t*>(blurred.data()), input.totalSize(), cudaMemcpyHostToDevice));
+			case Type::UINT16:
+				gimage::ArrayUint16 blurred(numRows, numCols);
+				//run gaussian blur first. 
+				gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
+				uint16_t *d_gradient;
+				int *d_theta;
+				//allocate all our arrays. 
+				checkCudaErrors(cudaAlloc(d_gradient, input.size()));
+				checkCudaErrors(cudaAlloc(d_theta, input.size()));
+			
+				//allocate on gpu. 
+				input.gpuAlloc();
+				input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 
-			//call our gradient kernel
-			gradientAndDirection << <grid_size, block_size >> >(d_in, d_gradient, d_theta, d_kgx, d_kgy, numRows, numCols);
-			//synchronize the device. 
-			cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
-			//for now just testing gradient part so copy this result to the output. 
-			checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.data()), d_gradient, output.totalSize(), cudaMemcpyDeviceToHost));
+				uint16_t* d_in;
+				uint16_t* d_out;
+				d_in = static_cast<uint16_t*>(input.deviceData());
+				
+				//call our gradient kernel
+				gradientAndDirection << <grid_size, block_size >> >(d_in, d_gradient, d_theta, d_kgx, d_kgy, numRows, numCols);
+				//synchronize the device. 
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-			//free up used memory. 
-			checkCudaErrors(cudaFree(d_in));
-			checkCudaErrors(cudaFree(d_gradient));
-			checkCudaErrors(cudaFree(d_theta));
-			break;
+				//allocated output.
+				output.gpuAlloc();
+				d_out = static_cast<uint16_t*>(output.deviceData());
+
+				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_out, upperThresh, lowerThresh, numRows, numCols);
+				//for now just testing gradient part so copy this result to the output. 
+				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_gradient, output.totalSize(), cudaMemcpyDeviceToHost));
+
+				//free up used memory. 
+				input.gpuFree();
+				output.gpuFree();
+
+				checkCudaErrors(cudaFree(d_gradient));
+				checkCudaErrors(cudaFree(d_theta));
+				break;
 		}
 		
 		//free our gpu filters. 
@@ -519,7 +773,6 @@ namespace gimage {
 		//free cpu memory. 
 		delete[] k_gx;
 		delete[] k_gy;
-
 	}
 }
 

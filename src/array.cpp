@@ -3,13 +3,7 @@
 
 namespace gimage {
 
-	Array::Array(Type type) {
-		_type = type;
-	}
-
-	Type Array::getType() {
-		return _type;
-	}
+	
 
 	Matrix<double>::Matrix<double>(size_t size) : Array(TYPE_DOUBLE){
 		_size = size;
