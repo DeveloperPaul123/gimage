@@ -3,6 +3,24 @@
 #include "timer.h"
 
 #define PI 3.14159265359
+#define PRINT_INFO 1
+#define checkCudaErrors(val) check( (val), #val, __FILE__, __LINE__)
+
+template<typename T>
+void check(T err, const char* const func, const char* const file, const int line) {
+	if (err != cudaSuccess) {
+		std::cerr << "CUDA error at: " << file << ":" << line << std::endl;
+		std::cerr << cudaGetErrorString(err) << " " << func << std::endl;
+		exit(1);
+	}
+}
+
+template<typename T>
+cudaError_t cudaAlloc(T*& d_p, size_t elements)
+{
+	return cudaMalloc((void**)&d_p, elements * sizeof(T));
+}
+
 /**
 * Helper function to select the proper CUDA device based on memory.
 * @return int the device index to use.
@@ -199,6 +217,21 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 		correctAngle = 135;
 	//store the angle. 
 	d_theta[index] = correctAngle;
+}
+
+template<typename T>
+__global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int upperThresh, int lowerThresh, int numRows, int numCols) {
+	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
+	int r = threadIdx.x + blockIdx.x*blockDim.x;
+	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+
+	if (index >= numRows*numCols) {
+		return;
+	}
+
+	//TODO: Perform suppression. 
 }
 
 /**
