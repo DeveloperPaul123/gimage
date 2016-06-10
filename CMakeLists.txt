@@ -21,7 +21,6 @@ find_package(OpenCV REQUIRED)
 set(CUDA_SOURCE_DIR ${PROJECT_SOURCE_DIR}/cuda)
 set(COMMON_INCLUDES ${PROJECT_SOURCE_DIR}/include)
 set(TEST_SOURCES_DIR ${PROJECT_SOURCE_DIR}/test)
-set(COMMON_SRC_DIR ${PROJECT_SOURCE_DIR}/src)
 
 file(GLOB gimage_headers ${COMMON_INCLUDES}/*.h)
 file(GLOB gimage_sources ${CUDA_SOURCE_DIR}/*.cu ${COMMON_SRC_DIR}/*.cpp)

@@ -32,9 +32,36 @@ namespace gimage {
 		* @return Type the array's type.
 		*/
 		Type getType();
+
+		/**
+		* Get the underlying data of the array. 
+		* @return void* raw data pointer. 
+		*/
 		virtual void* data() = 0;
+
+		/**
+		* Total size of the array (i.e. size * sizeof(type))
+		* @return size_t total size of the array.
+		*/
 		virtual size_t totalSize() = 0;
+
+		/**
+		* Number of elements in the array. 
+		* @return size_t total size. 
+		*/
 		virtual size_t size() = 0;
+
+		/**
+		* Get the number of rows in the array.
+		* @return int the number of rows.
+		*/
+		virtual int rows() = 0;
+
+		/**
+		* Get the number of columns in the array.
+		* @return int the number of columns in the array.
+		*/
+		virtual int cols() = 0;
 
 	private:
 		Type _type;
@@ -46,6 +73,14 @@ namespace gimage {
 	template<typename T>
 	class GIMAGE_EXPORT Matrix : public Array {
 	public:
+
+		Matrix(int rows, int columns) : Array(TYPE_NONE){
+			_rows = rows; 
+			_cols = columns;
+			_size = _rows*_cols;
+			allocate(_size);
+		}
+
 		/**
 		* Instantiate matrix of a given size. 
 		* This will allocate memory of type T[size].
@@ -64,6 +99,16 @@ namespace gimage {
 		}
 
 		/**
+		* Get data at a particular row and column. 
+		* @param row the row to look at.
+		* @param col the column to look at. 
+		*/
+		T at(int row, int col) {
+			assert(row < _rows && col < _cols);
+			return _data[row*_cols + col];
+		}
+
+		/**
 		* Returns a pointer to the underlying data. 
 		* @return void* data pointer. 
 		*/
@@ -71,6 +116,13 @@ namespace gimage {
 			return static_cast<T*>(getData());
 		}
 
+		virtual int rows() {
+			return _rows;
+		}
+
+		virtual int cols() {
+			return _cols;
+		}
 		/**
 		* Gets data from a given index. 
 		*/
@@ -118,6 +170,8 @@ namespace gimage {
 			_data = new T[size];
 		}
 		
+		int _cols = 0;
+		int _rows = 0;
 		size_t _size;
 		T* _data;
 	};
