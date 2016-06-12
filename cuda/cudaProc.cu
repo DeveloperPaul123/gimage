@@ -61,6 +61,24 @@ int selectDevice() {
 	}
 }
 
+template<typename T>
+__global__ void colorToGrey(T* red, T* green, T* blue, T* gray, int numRows, int numCols) {
+	
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	int totalSize = numRows*numCols;
+	if (index < totalSize) {
+		double r = static_cast<double>(red[index]);
+		double g = static_cast<double>(green[index]);
+		double b = static_cast<double>(blue[index]);
+		double grey = 0.21*r + 0.72*g + 0.07*b;
+		gray[index] = static_cast<T>(grey);
+	}
+}
+
 /**
 * Gaussian blur kernal. Reads in a 16 bit image and outputs the blured image.
 * @param d_in device input image.
@@ -75,8 +93,8 @@ __global__ void gaussian(T *d_in, T *d_out, const float* const filter, int numRo
 	//so filter width defines width of the filter.
 	assert(blurSize % 2 == 1); //filter size should be odd.
 	//get row and column in blcok
-	int r = threadIdx.x + blockIdx.x*blockDim.x;
-	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
 	//get unique point in image by finding position in grid.
 	int offset = c + r*blockDim.x*gridDim.x;
 
@@ -151,10 +169,10 @@ __global__ void generateLUT(int* d_LUT, const int window, const int level, const
 template<typename T>
 __global__ void cudaWindowLevel(T* input, T *output, int *d_LUT, int numRows, int numCols, int window, int level, int levels) {
 	//get row and column in blcok
-	int r = threadIdx.x + blockIdx.x*blockDim.x;
-	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
 	//get unique point in image by finding position in grid.
-	int index = r + c*blockDim.x*gridDim.x;
+	int index = c + r*blockDim.x*gridDim.x;
 	if (index < numRows*numCols) {
 		T in = input[index];
 		if (in < levels) {
@@ -177,8 +195,8 @@ __global__ void cudaWindowLevel(T* input, T *output, int *d_LUT, int numRows, in
 template<typename T>
 __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* k_gx, int* k_gy, int numRows, int numCols) {
 	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
-	int r = threadIdx.x + blockIdx.x*blockDim.x;
-	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
 	//get unique point in image by finding position in grid.
 	int index = c + r*blockDim.x*gridDim.x;
 
@@ -241,7 +259,7 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 * @param numCols the number of columns in the arrays (should be the same for all).
 */
 template<typename T>
-__global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int upperThresh, int lowerThresh, int numRows, int numCols) {
+__global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int numRows, int numCols) {
 	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
 	int r = threadIdx.x + blockIdx.x*blockDim.x;
 	int c = threadIdx.y + blockIdx.y*blockDim.y;
@@ -252,7 +270,200 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 		return;
 	}
 
-	//TODO: Perform suppression. 
+	T value = d_gradMag[index];
+	int direction = d_theta[index];
+	int fCheck, sCheck = -1;
+	switch (direction) {
+	case 0:
+		//horizontal
+		fCheck = r + (c-1)*blockDim.x*gridDim.x;
+		sCheck = r + (c+1)*blockDim.x*gridDim.x;
+		break;
+	case 45:
+		//one row less one column more
+		fCheck = (r - 1) + (c+1)*blockDim.x*gridDim.x;
+		sCheck = (r + 1) + (c-1)*blockDim.x*gridDim.x;
+		break;
+	case 90:
+		//vertical
+		fCheck = (r - 1) + c*blockDim.x*gridDim.x;
+		sCheck = (r + 1) + c*blockDim.x*gridDim.x;
+		break;
+	case 135:
+		fCheck = (r - 1) + (c -1)*blockDim.x*gridDim.x;
+		sCheck = (r + 1) + (c + 1)*blockDim.x*gridDim.x;
+		break;
+	}
+
+	if (fCheck < numRows*numCols && sCheck < numRows*numCols) {
+		T v1 = d_gradMag[fCheck];
+		T v2 = d_gradMag[sCheck];
+		int maxIndex = -1;
+		if (value > v1 && value > v2) {
+			maxIndex = index;
+		}
+		else if (value < v1 && v1 > v2) {
+			maxIndex = fCheck;
+		}
+		else if (value < v2 && v2 > v1){
+			maxIndex = sCheck;
+		}
+
+		if (maxIndex > 0 && maxIndex < numRows*numCols) {
+			d_out[maxIndex] = d_gradMag[maxIndex];	
+		}
+	}
+}
+
+/**
+* Performs hysteresis thresholding using two thresholds. If a value is above the upper threshold then it is deemed to definitely be an edge.
+* If it is between the two thresholds, then it is only considered an edge if it is connected to a definite edge. If it is below or eqaul to 
+* the lower threshold then it is definitely not an edge. 
+* @param d_in input gradient magnitudes after non maximum suppression.
+* @param d_out output edge image.
+* @param theta gradient directions
+* @param upper the upper threshold
+* @param lower the lower threshold
+* @param numRows the number of rows in all the arrays
+* @param numCols the number of columns in all the arrays
+*/
+template<typename T> 
+__global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper, int lower, int numRows, int numCols) {
+	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
+	int r = threadIdx.x + blockIdx.x*blockDim.x;
+	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	int totalSize = numRows*numCols;
+	if (index < totalSize) {
+		T value = d_in[index];
+		if (static_cast<int>(value) >= upper) {
+			d_out[index] = value;
+		}
+		else if (static_cast<int>(value) <= lower) {
+			d_out[index] = static_cast<T>(0);
+		}
+		else {
+			//inbetween both values so walk the path. 
+			//get the direction.
+			int totBlockSize = blockDim.x*gridDim.x;
+			int direction = theta[index];
+			int rowOffset, colOffset = 1;
+			bool foundFirst = false;
+			while (true) {
+				//traverse the path.
+				int idxOne = -1;
+				switch (direction) {
+				case 0:
+					//traverse column wise. 
+					idxOne = r + (c - colOffset)*totBlockSize;
+					break;
+				case 45:
+					idxOne = (r - rowOffset) + (c + colOffset)*totBlockSize;
+					break;
+				case 90:
+					idxOne = (r - rowOffset) + c*totBlockSize;
+					break;
+				case 135:
+					idxOne = (r - rowOffset) + (c - colOffset)*totBlockSize;
+					break;
+				}
+
+				if (idxOne < totalSize && idxOne >= 0) {
+					T v1 = d_in[idxOne];
+					int dirOne = theta[idxOne];
+					int v1Cast = static_cast<int>(v1);
+
+					if (v1Cast <= lower) {
+						//below lower threshold so no good. 
+						foundFirst = false;
+						break;
+					}
+					else if (v1Cast >= upper) {
+						//def an edge so we're good. 
+						foundFirst = true;
+						//go ahead and set the value.
+						d_out[index] = value;
+						break;
+					}
+					else if (dirOne != direction) {
+						foundFirst = false;
+						break;
+					}
+					else {
+						//increment and continue.
+						colOffset++;
+						rowOffset++;
+					}
+				}
+				else {
+					if (r + rowOffset >= numRows || c + colOffset >= numCols) {
+						foundFirst = false;
+						break;
+					}
+				}
+				
+
+			}
+
+			//reset offsets. 
+			colOffset = 1;
+			rowOffset = 1;
+
+			if (!foundFirst) {
+				while (true) {
+					int idxTwo = -1;
+					switch (direction) {
+					case 0:
+						//traverse column wise. 
+						idxTwo = r + (c + colOffset)*totBlockSize;
+						break;
+					case 45:
+						idxTwo = (r + rowOffset) + (c - colOffset)*totBlockSize;
+						break;
+					case 90:
+						idxTwo = (r + rowOffset) + c*totBlockSize;
+						break;
+					case 135:
+						idxTwo = (r + rowOffset) + (c + colOffset)*totBlockSize;
+						break;
+					}
+
+					if (idxTwo < totalSize && idxTwo >= 0) {
+
+						T v2 = d_in[idxTwo];
+						int dirTwo = theta[idxTwo];
+						int v2Cast = static_cast<int>(v2);
+
+						if (v2Cast <= lower) {
+							//below lower threshold so no good. 
+							d_out[index] = static_cast<T>(0);
+							break;
+						}
+						else if (v2Cast >= upper) {
+							//def an edge so we're good. 
+							d_out[index] = value;
+							break;
+						}
+						else if (dirTwo != direction) {
+							d_out[index] = static_cast<T>(0);
+							break;
+						}
+						else {
+							//increment and continue.
+							colOffset++;
+							rowOffset++;
+						}
+					}
+					else {
+						if (r + rowOffset >= numRows || c + colOffset >= numCols) {
+							d_out[index] = static_cast<T>(0);
+						}
+					}
+				}
+			}	
+		}
+	}
 }
 
 /**
@@ -260,26 +471,10 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 */
 namespace gimage {
 
-	/**
-	* Return the type of the array. See gimage::Type for possible types. 
-	* @return Type the type of the array.
-	*/
-	Type Array::getType() {
-		return _type;
-	}
-
-	/**
-	* Generic array of doubles.
-	* @param rows number of rows in the array.
-	* @param cols number of columns in the array. 
-	*/
 	DoubleArray::DoubleArray(int rows, int cols) : Array(rows, cols, Type::DOUBLE) {
 		allocate(size());
 	}
 
-	/**
-	* Deallocate all data. 
-	*/
 	DoubleArray::~DoubleArray() {
 		delete[] h_data;
 		if (d_data) {
@@ -288,37 +483,47 @@ namespace gimage {
 		}
 	}
 
-	/**
-	* Returns a pointer to the host data. 
-	* @return void* host data pointer. Can static_cast this to double*
-	*/
+	Array& DoubleArray::operator+(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		DoubleArray out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<double>(r, c, at<double>(r, c) +
+					other.at<double>(r, c));
+			}
+		}
+
+		return out;
+	}
+
+	Array& DoubleArray::operator-(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		DoubleArray out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<double>(r, c, at<double>(r, c) -
+					other.at<double>(r, c));
+			}
+		}
+
+		return out;
+	}
+
 	void* DoubleArray::hostData() {
 		return h_data;
 	}
 
-	/**
-	* Returns a pointer to the device data array. Note that this array will be NULL
-	* if gpuAlloc() has not been called. 
-	* @return void* device data pointer. Can be static_cast to double*
-	*/
 	void* DoubleArray::deviceData() {
 		return d_data;
 	}
 
-	/**
-	* Allocate data onto the GPU. Note that this does not copy data over to the GPU.
-	*/
+	
 	void DoubleArray::gpuAlloc() {
 		if (!d_data) {
 			checkCudaErrors(cudaAlloc(d_data, size()));
 		}
 	}
 
-	/**
-	* Free GPU data. This function will check to see if the data pointer is
-	* valid first before attempting to free it. It will be set to NULL once 
-	* it is freed from GPU memory.
-	*/
 	void DoubleArray::gpuFree() {
 		if (d_data) {
 			checkCudaErrors(cudaFree(d_data));
@@ -326,18 +531,10 @@ namespace gimage {
 		}	
 	}
 
-	/**
-	* Total size of the array including the size of the type.
-	* @return the size of the array * sizeof(type)
-	*/
 	int DoubleArray::totalSize() {
 		return size() * sizeof(double);
 	}
 
-	/**
-	* Clones host data from this array to the other array.
-	* @param other the array to copy data to. 
-	*/
 	void DoubleArray::clone(Array& other) {
 		assert(other.getType() == getType());
 		assert(other.size() == size());
@@ -345,10 +542,6 @@ namespace gimage {
 			static_cast<double*>(hostData()), totalSize());
 	}
 
-	/**
-	* Copy data to or from the host and/or device. 
-	* @param dir the direction to copy. 
-	*/
 	void DoubleArray::memcpy(MemcpyDirection dir) {
 		if (dir == MemcpyDirection::HOST_TO_DEVICE) {
 			checkCudaErrors(cudaMemcpy(d_data, h_data, totalSize(), cudaMemcpyHostToDevice));
@@ -358,26 +551,14 @@ namespace gimage {
 		}
 	}
 
-	/**
-	* Allocate host memory. 
-	* @param size the size of the data to allocate. 
-	*/
 	void DoubleArray::allocate(int size) {
 		h_data = new double[size];
 	}
 
-	/**
-	* Generic array of unsigned 16 bit integers.
-	* @param rows number of rows in the array.
-	* @param cols number of columns in the array.
-	*/
 	ArrayUint16::ArrayUint16(int rows, int cols) : Array(rows, cols, Type::UINT16) {
 		allocate(size());
 	}
 
-	/**
-	* Deallocate the array and underlying buffers. 
-	*/
 	ArrayUint16::~ArrayUint16() {
 		delete[] h_data;
 		if (d_data) {
@@ -386,38 +567,46 @@ namespace gimage {
 		}
 	}
 
-	/**
-	* Returns a pointer to the host data.
-	* @return void* host data pointer. Can static_cast this to double*
-	*/
+	Array& ArrayUint16::operator+(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		ArrayUint16 out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) +
+					other.at<uint16_t>(r, c));
+			}
+		}
+
+		return out;
+	}
+
+	Array& ArrayUint16::operator-(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		ArrayUint16 out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) -
+					other.at<uint16_t>(r, c));
+			}
+		}
+
+		return out;
+	}
+
 	void* ArrayUint16::hostData() {
 		return h_data;
 	}
 
-	/**
-	* Returns a pointer to the device data array. Note that this array will be NULL
-	* if gpuAlloc() has not been called.
-	* @return void* device data pointer. Can be static_cast to double*
-	*/
 	void* ArrayUint16::deviceData() {
 		return d_data;
 	}
 
-	/**
-	* Allocate data onto the GPU. Note that this does not copy data over to the GPU.
-	* @return void* device pointer to data. Use static cast to cast this to the proper type. 
-	*/
 	void ArrayUint16::gpuAlloc() {
 		if (!d_data) {
 			checkCudaErrors(cudaAlloc(d_data, size()));
 		}
 	}
 
-	/**
-	* Free GPU data. This function will check to see if the data pointer is
-	* valid first before attempting to free it. It will be set to NULL once
-	* it is freed from GPU memory.
-	*/
 	void ArrayUint16::gpuFree() {
 		if (d_data) {
 			checkCudaErrors(cudaFree(d_data));
@@ -425,18 +614,10 @@ namespace gimage {
 		}	
 	}
 
-	/**
-	* Total size of the array.
-	* @return int the size of the array * sizeof(type)
-	*/
 	int ArrayUint16::totalSize() {
 		return size() * sizeof(uint16_t);
 	}
 
-	/**
-	* Copy data to or from the host and/or device.
-	* @param dir the direction to copy.
-	*/
 	void ArrayUint16::memcpy(MemcpyDirection dir) {
 		if (dir == MemcpyDirection::HOST_TO_DEVICE) {
 			checkCudaErrors(cudaMemcpy(d_data, h_data, totalSize(), cudaMemcpyHostToDevice));
@@ -446,10 +627,6 @@ namespace gimage {
 		}
 	}
 
-	/**
-	* Clones host data from this array to the other array.
-	* @param other the array to copy data to.
-	*/
 	void ArrayUint16::clone(Array& other) {
 		assert(other.getType() == getType());
 		assert(other.size() == size());
@@ -457,12 +634,38 @@ namespace gimage {
 			static_cast<uint16_t*>(hostData()), totalSize());
 	}
 
-	/**
-	* Allocate host memory.
-	* @param size the size of the data to allocate.
-	*/
 	void ArrayUint16::allocate(int size) {
 		h_data = new uint16_t[size];
+	}
+
+
+	MatrixD::MatrixD(int size) : DoubleArray(1, size) {
+	}
+
+	MatrixD::MatrixD(int rows, int cols) : DoubleArray(rows, cols) {
+
+	}
+
+	double MatrixD::det() {
+		//TODO: calculate determinant
+		return 1.0;
+	}
+
+	Array& MatrixD::operator*(Array& other) {
+		assert(cols() == other.rows());
+		MatrixD out(rows(), other.cols());
+		//TODO: perform matrix computation
+		return out;
+	}
+
+	/**
+	* Converts a color image to a grayscale image.
+	* @param
+	*/
+	void GIMAGE_EXPORT rgbToGray(Array& input, Array& output) {
+		input.gpuAlloc();
+		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		output.gpuAlloc();
 	}
 
 	/**
@@ -667,13 +870,10 @@ namespace gimage {
 
 	/**
 	* Performs canny edge detection on the input and outputs an image with only the edges in the output. 
-	* @param input the input image. 
-	* @param output the output image (edges only).
-	* @param numRows number of rows in the image.
-	* @param numCols the number of the columns in the image.
-	* @param sigma sigma for the gaussian blur.
-	* @param uint16_t lowerThresh lower threshold for the canny edge detector.
-	* @param uint16_t upterThresh upper threshold for the canny edge detector. 
+	* This performs the following steps: (1) Apply a gaussian filter to smooth the image.
+	* (2) Apply the Sobel operator in the x and y directions and keep track of gradient/direction.
+	* (3) Perform non maximum suppression on the image.
+	* (4) Use dual hysteresis thresholding to further eliminate false edges. 
 	*/
 	void GIMAGE_EXPORT cannyEdgeDetector(Array& input, Array& output, int numRows, int numCols,
 		float sigma, int lowerThresh, int upperThresh) {
@@ -723,6 +923,9 @@ namespace gimage {
 		checkCudaErrors(cudaMemcpy(d_kgx, k_gx, sizeof(int) * 9, cudaMemcpyHostToDevice));
 		checkCudaErrors(cudaMemcpy(d_kgy, k_gy, sizeof(int) * 9, cudaMemcpyHostToDevice));
 
+		int *d_theta;
+		checkCudaErrors(cudaAlloc(d_theta, input.size()));
+
 		//check the image type.
 		gimage::Type t = input.getType();
 		switch (t) {
@@ -731,17 +934,18 @@ namespace gimage {
 				//run gaussian blur first. 
 				gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
 				uint16_t *d_gradient;
-				int *d_theta;
+				
 				//allocate all our arrays. 
 				checkCudaErrors(cudaAlloc(d_gradient, input.size()));
-				checkCudaErrors(cudaAlloc(d_theta, input.size()));
-			
+		
 				//allocate on gpu. 
 				input.gpuAlloc();
+				//copy data to GPU.
 				input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 
 				uint16_t* d_in;
 				uint16_t* d_out;
+				//get input device pointer. 
 				d_in = static_cast<uint16_t*>(input.deviceData());
 				
 				//call our gradient kernel
@@ -753,13 +957,34 @@ namespace gimage {
 				output.gpuAlloc();
 				d_out = static_cast<uint16_t*>(output.deviceData());
 
-				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_out, upperThresh, lowerThresh, numRows, numCols);
-				//for now just testing gradient part so copy this result to the output. 
-				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_gradient, output.totalSize(), cudaMemcpyDeviceToHost));
+				//create non maximum suppression output.
+				ArrayUint16 nonMaxOut(output.rows(), output.cols());
+				//allocate on GPU.
+				nonMaxOut.gpuAlloc();
+				//get device pointer.
+				uint16_t* d_nMax_out = static_cast<uint16_t*>(nonMaxOut.deviceData());
+				//set output to zeros.
+
+				checkCudaErrors(cudaMemset(d_out, 0, output.totalSize()));
+				GpuTimer timer;
+				timer.Start();
+				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_nMax_out, numRows, numCols);
+				timer.Stop();
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+				timer.Start();
+				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols);
+				timer.Stop();
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+				//copy result to gpu. 
+				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_out, output.totalSize(), cudaMemcpyDeviceToHost));
+
 
 				//free up used memory. 
 				input.gpuFree();
 				output.gpuFree();
+				nonMaxOut.gpuFree();
 
 				checkCudaErrors(cudaFree(d_gradient));
 				checkCudaErrors(cudaFree(d_theta));

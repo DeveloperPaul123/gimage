@@ -84,5 +84,6 @@ TEST(gimage, canny_test) {
 	cv::imshow("Input", input);
 	cv::imshow("Output", result);
 	cv::waitKey(0);
+	cv::imwrite("canny_out.tif", result);
 }
 

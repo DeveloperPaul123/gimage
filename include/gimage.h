@@ -16,6 +16,9 @@
 #include "array.h"
 
 namespace gimage {
+
+	void GIMAGE_EXPORT rgbToGray(Array& input, Array&output);
+
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.
 	* @param input the input image
