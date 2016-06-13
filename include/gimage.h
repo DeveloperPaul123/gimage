@@ -4,20 +4,21 @@
 #include <iostream>
 #include <iomanip>
 #include <cstdint>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
-#include <device_launch_parameters.h>
-#include <device_functions.h>
 #include <cassert>
 #include <algorithm>
-#include "gimage_export.h"
 #include "timer.h"
 #include "array.h"
 
 namespace gimage {
 
-	void GIMAGE_EXPORT rgbToGray(Array& input, Array&output);
+	/**
+	* Converts an 8 bit RGB image to grayscale. 
+	* @param red the red channel of the image to convert.
+	* @param green the green channel of the image to convert.
+	* @param blue the blue channel of the image to convert.
+	* @param output the output gray scale image. 
+	*/
+	void GIMAGE_EXPORT rgbToGray(ArrayUint8 red, ArrayUint8 green, ArrayUint8 blue, ArrayUint8 output);
 
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.

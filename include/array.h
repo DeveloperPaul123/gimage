@@ -266,14 +266,14 @@ namespace gimage {
 
 		/**
 		* Returns a pointer to the host data.
-		* @return void* host data pointer. Can static_cast this to double*
+		* @return void* host data pointer. Can static_cast this to uint16_t*
 		*/
 		void* hostData();
 
 		/**
 		* Returns a pointer to the device data array. Note that this array will be NULL
 		* if gpuAlloc() has not been called.
-		* @return void* device data pointer. Can be static_cast to double*
+		* @return void* device data pointer. Can be static_cast to uint16_t*
 		*/
 		void* deviceData();
 
@@ -319,7 +319,81 @@ namespace gimage {
 		uint16_t *d_data = NULL;
 	};
 
-	class GIMAGE_EXPORT MatrixD :  public DoubleArray{
+	class GIMAGE_EXPORT ArrayUint8 : public Array {
+
+	public:
+		/**
+		* Generic array of unsigned 8 bit integers (uint16_t).
+		* @param rows number of rows in the array.
+		* @param cols number of columns in the array.
+		*/
+		ArrayUint8(int rows, int cols);
+
+		/**
+		* Deallocate the array and underlying buffers.
+		*/
+		~ArrayUint8();
+
+		Array& operator+(Array &other);
+
+		Array& operator-(Array &other);
+
+		/**
+		* Returns a pointer to the host data.
+		* @return void* host data pointer. Can static_cast this to uint8_t*
+		*/
+		void* hostData();
+
+		/**
+		* Returns a pointer to the device data array. Note that this array will be NULL
+		* if gpuAlloc() has not been called.
+		* @return void* device data pointer. Can be static_cast to uint8_t*
+		*/
+		void* deviceData();
+
+		/**
+		* Allocate data onto the GPU. Note that this does not copy data over to the GPU.
+		* @return void* device pointer to data. Use static cast to cast this to the proper type.
+		*/
+		void gpuAlloc();
+
+		/**
+		* Free GPU data. This function will check to see if the data pointer is
+		* valid first before attempting to free it. It will be set to NULL once
+		* it is freed from GPU memory.
+		*/
+		void gpuFree();
+
+		/**
+		* Clones host data from this array to the other array.
+		* @param other the array to copy data to.
+		*/
+		void clone(Array& other);
+
+		/**
+		* Copy data to or from the host and/or device.
+		* @param dir the direction to copy.
+		*/
+		void memcpy(MemcpyDirection dir);
+
+		/**
+		* Total size of the array.
+		* @return int the size of the array * sizeof(type)
+		*/
+		int totalSize();
+
+	private:
+
+		/**
+		* Allocate host memory.
+		* @param size the size of the data to allocate.
+		*/
+		virtual void allocate(int size);
+		uint8_t *h_data;
+		uint8_t *d_data = NULL;
+	};
+
+	class GIMAGE_EXPORT MatrixD :  public DoubleArray {
 	public:
 		/**
 		* Matrix of doubles. Allocate a vector of a give size.
@@ -348,7 +422,7 @@ namespace gimage {
 		* will be an mxn array.
 		* @return Array the resultant array. 
 		*/
-		Array& operator*(Array& other);
+		MatrixD operator*(MatrixD other);
 	};
 }
 #endif

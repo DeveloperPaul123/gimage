@@ -3,11 +3,13 @@
 
 #include <cuda_runtime.h>
 
-struct GpuTimer
+class GpuTimer
 {
+private:
   cudaEvent_t start;
   cudaEvent_t stop;
 
+public:
   GpuTimer()
   {
     cudaEventCreate(&start);

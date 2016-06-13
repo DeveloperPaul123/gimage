@@ -1,6 +1,11 @@
 #include "gimage.h"
 #include "array.h"
 #include "timer.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <device_launch_parameters.h>
+#include <device_functions.h>
 
 #define PI 3.14159265359
 #define PRINT_INFO 1
@@ -61,6 +66,15 @@ int selectDevice() {
 	}
 }
 
+/**
+* Confirms an RBG image to gray scale using the luminosity formula. 
+* @param red the red channel
+* @param green the green channel
+* @param blue the blue channel.
+* @param gray the gray scale output.
+* @param numRows the number of rows in all the images.
+* @param numCols the number of columns in all of the images.
+*/
 template<typename T>
 __global__ void colorToGrey(T* red, T* green, T* blue, T* gray, int numRows, int numCols) {
 	
@@ -638,12 +652,93 @@ namespace gimage {
 		h_data = new uint16_t[size];
 	}
 
+	ArrayUint8::ArrayUint8(int rows, int cols) : Array(rows, cols, Type::UINT16) {
+		allocate(size());
+	}
+
+	ArrayUint8::~ArrayUint8() {
+		delete[] h_data;
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}
+	}
+
+	Array& ArrayUint8::operator+(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		ArrayUint16 out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) +
+					other.at<uint16_t>(r, c));
+			}
+		}
+
+		return out;
+	}
+
+	Array& ArrayUint8::operator-(Array &other) {
+		assert(rows() == other.rows() && cols() == other.cols());
+		ArrayUint16 out(rows(), cols());
+		for (int r = 0; r < rows(); r++) {
+			for (int c = 0; c < cols(); c++) {
+				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) -
+					other.at<uint16_t>(r, c));
+			}
+		}
+
+		return out;
+	}
+
+	void* ArrayUint8::hostData() {
+		return h_data;
+	}
+
+	void* ArrayUint8::deviceData() {
+		return d_data;
+	}
+
+	void ArrayUint8::gpuAlloc() {
+		if (!d_data) {
+			checkCudaErrors(cudaAlloc(d_data, size()));
+		}
+	}
+
+	void ArrayUint8::gpuFree() {
+		if (d_data) {
+			checkCudaErrors(cudaFree(d_data));
+			d_data = NULL;
+		}
+	}
+
+	int ArrayUint8::totalSize() {
+		return size() * sizeof(uint16_t);
+	}
+
+	void ArrayUint8::memcpy(MemcpyDirection dir) {
+		if (dir == MemcpyDirection::HOST_TO_DEVICE) {
+			checkCudaErrors(cudaMemcpy(d_data, h_data, totalSize(), cudaMemcpyHostToDevice));
+		}
+		else {
+			checkCudaErrors(cudaMemcpy(h_data, d_data, totalSize(), cudaMemcpyDeviceToHost));
+		}
+	}
+
+	void ArrayUint8::clone(Array& other) {
+		assert(other.getType() == getType());
+		assert(other.size() == size());
+		std::memcpy(static_cast<uint16_t*>(other.hostData()),
+			static_cast<uint16_t*>(hostData()), totalSize());
+	}
+
+	void ArrayUint8::allocate(int size) {
+		h_data = new uint8_t[size];
+	}
 
 	MatrixD::MatrixD(int size) : DoubleArray(1, size) {
 	}
 
 	MatrixD::MatrixD(int rows, int cols) : DoubleArray(rows, cols) {
-
 	}
 
 	double MatrixD::det() {
@@ -651,10 +746,28 @@ namespace gimage {
 		return 1.0;
 	}
 
-	Array& MatrixD::operator*(Array& other) {
+	/**
+	* Performs matrix multiplication. 
+	*/
+	MatrixD MatrixD::operator*(MatrixD other) {
 		assert(cols() == other.rows());
 		MatrixD out(rows(), other.cols());
-		//TODO: perform matrix computation
+	
+		int outRows = out.rows();
+		int outCols = out.cols();
+		for (int r = 0; r < outRows; r++) {
+			for (int c = 0; c < outCols; c++) {
+				//find sum for this position. 
+				double sum = 0.0;
+				for (int i_r = 0; i_r < other.rows(); i_r++) {
+					for (int i_c = 0; i_c < cols(); i_c++) {
+						sum += other.at<double>(i_r, c) *
+							at<double>(r, i_c);
+					}
+				}
+				out.setData<double>(r, c, sum);
+			}
+		}
 		return out;
 	}
 
@@ -662,10 +775,63 @@ namespace gimage {
 	* Converts a color image to a grayscale image.
 	* @param
 	*/
-	void GIMAGE_EXPORT rgbToGray(Array& input, Array& output) {
-		input.gpuAlloc();
-		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
-		output.gpuAlloc();
+	void GIMAGE_EXPORT rgbToGray(ArrayUint8 red, ArrayUint8 green, ArrayUint8 blue, ArrayUint8 gray) {
+
+		//allocate arrays and move data to device. 
+		red.gpuAlloc();
+		red.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		green.gpuAlloc();
+		green.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		blue.gpuAlloc();
+		blue.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		gray.gpuAlloc();
+
+		int numRows = red.rows();
+		int numCols = red.cols();
+
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		//get max threads and threads per block.
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+#if PRINT_INFO
+		std::cout << "GPU: " << properties.name << std::endl;
+		std::cout << "Using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
+		std::cout << "Max threads per block: " << properties.maxThreadsPerBlock << std::endl;
+		std::cout << "Max grid size: " << properties.maxGridSize[0] << std::endl;
+		std::cout << "Threads per block " << threadsPerBlock << std::endl;
+#endif	
+
+		//specify block size. 
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		/*
+		* Specify the grid size for the GPU.
+		* Make it generalized, so that the size of grid changes according to the input image size
+		*/
+		dim3 grid_size;
+		grid_size.x = (numCols + block_size.x - 1) / block_size.x;  /*< Greater than or equal to image width */
+		grid_size.y = (numRows + block_size.y - 1) / block_size.y; /*< Greater than or equal to image height */
+		
+		//gpu timer for 
+		GpuTimer timer;
+		timer.Start();
+		colorToGrey << <grid_size, block_size >> >(static_cast<uint8_t*>(red.hostData()), static_cast<uint8_t*>(green.hostData()),
+			static_cast<uint8_t*>(blue.hostData()), static_cast<uint8_t>(gray.hostData()));
+		timer.Stop();
+		float ms = timer.Elapsed();
+#if PRINT_INFO
+		printf("RGB to gray kernel took %f ms.\n", ms);
+#endif
+		//copy results back.
+		gray.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+
+		red.gpuFree();
+		green.gpuFree();
+		blue.gpuFree();
+		gray.gpuFree();
 	}
 
 	/**

@@ -87,3 +87,16 @@ TEST(gimage, canny_test) {
 	cv::imwrite("canny_out.tif", result);
 }
 
+TEST(gimage, matrix_mult_test) {
+	gimage::MatrixD a(2, 2);
+	gimage::MatrixD b(2, 2);
+	for (int r = 0; r < a.rows(); r++) {
+		for (int c = 0; c < a.cols(); c++) {
+			a.setData<double>(r, c, (double)(2.0));
+			b.setData<double>(r, c, (double)(4.0));
+		}
+	}
+	gimage::MatrixD out = a*b;
+	EXPECT_DOUBLE_EQ(out.at<double>(0, 0), 8.0);
+}
+
