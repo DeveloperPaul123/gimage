@@ -34,10 +34,10 @@ namespace gimage {
 		* @param cols the number of columns in the array. 
 		*/
 		Array(int rows, int cols, Type type) {
-			_rows = rows;
-			_cols = cols;
+			this->rows = rows;
+			this->cols = cols;
 			_type = type;
-			_size = _rows*_cols;
+			_size = this->rows*this->cols;
 		}
 
 		/**
@@ -57,6 +57,12 @@ namespace gimage {
 		* must be the same size.
 		*/
 		virtual Array& operator+(Array &other) = 0;
+
+		/**
+		* Assignment operator. Used to copy data from one array
+		* to another. 
+		*/
+		virtual Array& operator=(Array &other) = 0;
 
 		/**
 		* Returns the array's type.
@@ -115,8 +121,8 @@ namespace gimage {
 		*/
 		template<typename T>
 		void setData(int row, int col, T value) {
-			assert(row < _rows && col < _cols);
-			static_cast<T*>(hostData())[row*_cols + col] = static_cast<T>(value);
+			assert(row < rows && col < cols);
+			static_cast<T*>(hostData())[row*cols + col] = static_cast<T>(value);
 		}
 
 		/**
@@ -126,24 +132,8 @@ namespace gimage {
 		*/
 		template<typename T>
 		T at(int row, int col) {
-			assert(row < _rows && col < _cols);
-			return static_cast<T*>(hostData())[row*_cols + col];
-		}
-
-		/**
-		* Get the number of rows in the array.
-		* @return int the number of rows.
-		*/
-		int rows() {
-			return _rows;
-		}
-
-		/**
-		* Get the number of columns in the array.
-		* @return int the number of columns in the array.
-		*/
-		int cols() {
-			return _cols;
+			assert(row < rows && col < cols);
+			return static_cast<T*>(hostData())[row*cols + col];
 		}
 
 		/**
@@ -154,6 +144,15 @@ namespace gimage {
 			return _size;
 		}
 
+		/**
+		* Set the size of the array.
+		*/
+		void setSize(int size) {
+			_size = size;
+		}
+
+		int rows = 0;
+		int cols = 0;
 	private:
 		/**
 		* Allocate data array on the host. 
@@ -161,8 +160,7 @@ namespace gimage {
 		*/
 		virtual void allocate(int size) = 0;
 		Type _type = Type::NONE;
-		int _rows = 0;
-		int _cols = 0;
+		
 		int _size = 0;
 	};
 
@@ -185,6 +183,8 @@ namespace gimage {
 		Array& operator+(Array &other);
 
 		Array& operator-(Array &other);
+
+		Array& operator=(Array &other);
 
 		/**
 		* Returns a pointer to the host data.
@@ -264,6 +264,8 @@ namespace gimage {
 
 		Array& operator-(Array &other);
 
+		Array& operator=(Array &other);
+
 		/**
 		* Returns a pointer to the host data.
 		* @return void* host data pointer. Can static_cast this to uint16_t*
@@ -337,6 +339,8 @@ namespace gimage {
 		Array& operator+(Array &other);
 
 		Array& operator-(Array &other);
+
+		Array& operator=(Array &other);
 
 		/**
 		* Returns a pointer to the host data.

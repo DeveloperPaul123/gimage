@@ -485,6 +485,13 @@ __global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper,
 */
 namespace gimage {
 
+	Array& Array::operator=(Array& other) {
+		if (this == &other) {
+			return *this;
+		}
+		return *this;
+	}
+
 	DoubleArray::DoubleArray(int rows, int cols) : Array(rows, cols, Type::DOUBLE) {
 		allocate(size());
 	}
@@ -498,10 +505,10 @@ namespace gimage {
 	}
 
 	Array& DoubleArray::operator+(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		DoubleArray out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
+		assert(rows == other.rows && cols == other.cols);
+		DoubleArray out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
 				out.setData<double>(r, c, at<double>(r, c) +
 					other.at<double>(r, c));
 			}
@@ -511,16 +518,31 @@ namespace gimage {
 	}
 
 	Array& DoubleArray::operator-(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		DoubleArray out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
+		assert(rows == other.rows && cols == other.cols);
+		DoubleArray out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
 				out.setData<double>(r, c, at<double>(r, c) -
 					other.at<double>(r, c));
 			}
 		}
 
 		return out;
+	}
+
+	Array& DoubleArray::operator=(Array &other) {
+		if (this == &other) {
+			return *this;
+		}
+		assert(other.getType() == getType());
+		rows = other.rows;
+		cols = other.cols;
+		setSize(rows*cols);
+		delete[] h_data;
+		allocate(totalSize());
+		double* otherData = static_cast<double*>(other.hostData());
+		std::memcpy(h_data, otherData, totalSize());
+		return *this;
 	}
 
 	void* DoubleArray::hostData() {
@@ -581,11 +603,26 @@ namespace gimage {
 		}
 	}
 
+	Array& ArrayUint16::operator=(Array &other) {
+		if (this == &other) {
+			return *this;
+		}
+		assert(other.getType() == getType());
+		rows = other.rows;
+		cols = other.cols;
+		setSize(rows*cols);
+		delete[] h_data;
+		allocate(totalSize());
+		uint16_t* otherData = static_cast<uint16_t*>(other.hostData());
+		std::memcpy(h_data, otherData, totalSize());
+		return *this;
+	}
+
 	Array& ArrayUint16::operator+(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		ArrayUint16 out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
+		assert(rows == other.rows && cols == other.cols);
+		ArrayUint16 out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
 				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) +
 					other.at<uint16_t>(r, c));
 			}
@@ -595,10 +632,10 @@ namespace gimage {
 	}
 
 	Array& ArrayUint16::operator-(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		ArrayUint16 out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
+		assert(rows == other.rows && cols == other.cols);
+		ArrayUint16 out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
 				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) -
 					other.at<uint16_t>(r, c));
 			}
@@ -652,7 +689,7 @@ namespace gimage {
 		h_data = new uint16_t[size];
 	}
 
-	ArrayUint8::ArrayUint8(int rows, int cols) : Array(rows, cols, Type::UINT16) {
+	ArrayUint8::ArrayUint8(int rows, int cols) : Array(rows, cols, Type::UINT8) {
 		allocate(size());
 	}
 
@@ -665,12 +702,12 @@ namespace gimage {
 	}
 
 	Array& ArrayUint8::operator+(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		ArrayUint16 out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
-				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) +
-					other.at<uint16_t>(r, c));
+		assert(rows == other.rows && cols == other.cols);
+		ArrayUint8 out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
+				out.setData<uint8_t>(r, c, at<uint8_t>(r, c) +
+					other.at<uint8_t>(r, c));
 			}
 		}
 
@@ -678,16 +715,31 @@ namespace gimage {
 	}
 
 	Array& ArrayUint8::operator-(Array &other) {
-		assert(rows() == other.rows() && cols() == other.cols());
-		ArrayUint16 out(rows(), cols());
-		for (int r = 0; r < rows(); r++) {
-			for (int c = 0; c < cols(); c++) {
-				out.setData<uint16_t>(r, c, at<uint16_t>(r, c) -
-					other.at<uint16_t>(r, c));
+		assert(rows == other.rows && cols == other.cols);
+		ArrayUint8 out(rows, cols);
+		for (int r = 0; r < rows; r++) {
+			for (int c = 0; c < cols; c++) {
+				out.setData<uint8_t>(r, c, at<uint8_t>(r, c) -
+					other.at<uint8_t>(r, c));
 			}
 		}
 
 		return out;
+	}
+
+	Array& ArrayUint8::operator=(Array &other) {
+		if (this == &other) {
+			return *this;
+		}
+		assert(other.getType() == getType());
+		rows = other.rows;
+		cols = other.cols;
+		setSize(rows*cols);
+		delete[] h_data;
+		allocate(totalSize());
+		uint8_t* otherData = static_cast<uint8_t*>(other.hostData());
+		std::memcpy(h_data, otherData, totalSize());
+		return *this;
 	}
 
 	void* ArrayUint8::hostData() {
@@ -712,7 +764,7 @@ namespace gimage {
 	}
 
 	int ArrayUint8::totalSize() {
-		return size() * sizeof(uint16_t);
+		return size() * sizeof(uint8_t);
 	}
 
 	void ArrayUint8::memcpy(MemcpyDirection dir) {
@@ -727,8 +779,8 @@ namespace gimage {
 	void ArrayUint8::clone(Array& other) {
 		assert(other.getType() == getType());
 		assert(other.size() == size());
-		std::memcpy(static_cast<uint16_t*>(other.hostData()),
-			static_cast<uint16_t*>(hostData()), totalSize());
+		std::memcpy(static_cast<uint8_t*>(other.hostData()),
+			static_cast<uint8_t*>(hostData()), totalSize());
 	}
 
 	void ArrayUint8::allocate(int size) {
@@ -750,17 +802,17 @@ namespace gimage {
 	* Performs matrix multiplication. 
 	*/
 	MatrixD MatrixD::operator*(MatrixD other) {
-		assert(cols() == other.rows());
-		MatrixD out(rows(), other.cols());
+		assert(cols == other.rows);
+		MatrixD out(rows, other.cols);
 	
-		int outRows = out.rows();
-		int outCols = out.cols();
+		int outRows = out.rows;
+		int outCols = out.cols;
 		for (int r = 0; r < outRows; r++) {
 			for (int c = 0; c < outCols; c++) {
 				//find sum for this position. 
 				double sum = 0.0;
-				for (int i_r = 0; i_r < other.rows(); i_r++) {
-					for (int i_c = 0; i_c < cols(); i_c++) {
+				for (int i_r = 0; i_r < other.rows; i_r++) {
+					for (int i_c = 0; i_c < cols; i_c++) {
 						sum += other.at<double>(i_r, c) *
 							at<double>(r, i_c);
 					}
@@ -786,8 +838,8 @@ namespace gimage {
 		blue.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 		gray.gpuAlloc();
 
-		int numRows = red.rows();
-		int numCols = red.cols();
+		int numRows = red.rows;
+		int numCols = red.cols;
 
 		//select the device
 		int device = selectDevice();
@@ -819,7 +871,7 @@ namespace gimage {
 		GpuTimer timer;
 		timer.Start();
 		colorToGrey << <grid_size, block_size >> >(static_cast<uint8_t*>(red.hostData()), static_cast<uint8_t*>(green.hostData()),
-			static_cast<uint8_t*>(blue.hostData()), static_cast<uint8_t>(gray.hostData()));
+			static_cast<uint8_t*>(blue.hostData()), static_cast<uint8_t*>(gray.hostData()), numRows, numCols);
 		timer.Stop();
 		float ms = timer.Elapsed();
 #if PRINT_INFO
@@ -960,7 +1012,7 @@ namespace gimage {
 		//perform assertions
 		assert(input.getType() == out.getType());
 		assert(input.size() == out.size());
-		assert(input.rows() == out.rows() && input.cols() == out.cols() && input.rows() == numRows && input.cols() == numCols);
+		assert(input.rows == out.rows && input.cols == out.cols && input.rows == numRows && input.cols == numCols);
 		assert(window > 0 && level > 0);
 
 		//select the device
@@ -1124,7 +1176,7 @@ namespace gimage {
 				d_out = static_cast<uint16_t*>(output.deviceData());
 
 				//create non maximum suppression output.
-				ArrayUint16 nonMaxOut(output.rows(), output.cols());
+				ArrayUint16 nonMaxOut(output.rows, output.cols);
 				//allocate on GPU.
 				nonMaxOut.gpuAlloc();
 				//get device pointer.
