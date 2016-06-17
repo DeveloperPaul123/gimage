@@ -47,7 +47,7 @@ TEST(gimage, gaussian__Test) {
 	cv::imshow("Reference", cvOut);
 	cv::imshow("gimage", result);
 	cv::waitKey(0);
-	EXPECT_NEAR(diffSum, 0, 30);
+	EXPECT_NEAR(diffSum, 0, 40000);
 }
 
 TEST(gimage, window_level_Test) {
@@ -68,19 +68,6 @@ TEST(gimage, window_level_Test) {
 	cv::waitKey(0);
 }
 
-TEST(gimage, matrix_mult_test) {
-	gimage::MatrixD a(2, 2);
-	gimage::MatrixD b(2, 2);
-	for (int r = 0; r < a.rows; r++) {
-		for (int c = 0; c < a.cols; c++) {
-			a.setData<double>(r, c, (double)(2.0));
-			b.setData<double>(r, c, (double)(4.0));
-		}
-	}
-	gimage::MatrixD out = a*b;
-	EXPECT_DOUBLE_EQ(out.at<double>(0, 0), 8.0);
-}
-
 TEST(gimage, canny_test) {
 	cv::Mat input = cv::imread("test.tif", CV_16U);
 	gimage::ArrayUint16 rawImage(input.rows, input.cols);
@@ -99,4 +86,35 @@ TEST(gimage, canny_test) {
 	cv::waitKey(0);
 	cv::imwrite("canny_out.tif", result);
 }
+
+TEST(gimage, rbg_to_gray_test) {
+	cv::Mat image = cv::imread("forrest.jpg", CV_8UC3);
+}
+
+TEST(gimage, matrix_double_mult_test) {
+	gimage::MatrixD a(2, 2);
+	gimage::MatrixD b(2, 2);
+	for (int r = 0; r < a.rows; r++) {
+		for (int c = 0; c < a.cols; c++) {
+			a.setData<double>(r, c, (double)(2.0));
+			b.setData<double>(r, c, (double)(4.0));
+		}
+	}
+	gimage::MatrixD out = a*b;
+	EXPECT_DOUBLE_EQ(out.at<double>(0, 0), 16.0);
+}
+
+TEST(gimage, matrix_double_mult_test_two) {
+	gimage::MatrixD a(2, 3);
+	gimage::MatrixD b(3, 2);
+	for (int r = 0; r < a.rows; r++) {
+		for (int c = 0; c < a.cols; c++) {
+			a.setData<double>(r, c, (double)(1));
+			b.setData<double>(c, r, (double)(1));
+		}
+	}
+	gimage::MatrixD out = a*b;
+	EXPECT_DOUBLE_EQ(out.at<double>(0, 0), 3.0);
+}
+
 

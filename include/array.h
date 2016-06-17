@@ -175,6 +175,13 @@ namespace gimage {
 		DoubleArray(int rows, int cols);
 
 		/**
+		* Copy constructor. This will copy all the data in other to this
+		* double array.
+		* @param other the array to copy.
+		*/
+		DoubleArray(DoubleArray &other);
+
+		/**
 		* Deconstructor. All data, including on the GPU
 		* is deallocated here if it already hasn't been freed.
 		*/
@@ -256,6 +263,13 @@ namespace gimage {
 		ArrayUint16(int rows, int cols);
 
 		/**
+		* Copy constructor. This will copy all the data in other to this
+		* array.
+		* @param other the array to copy.
+		*/
+		ArrayUint16(ArrayUint16 &other);
+
+		/**
 		* Deallocate the array and underlying buffers.
 		*/
 		~ArrayUint16();
@@ -332,6 +346,13 @@ namespace gimage {
 		ArrayUint8(int rows, int cols);
 
 		/**
+		* Copy constructor. This will copy all the data in other to this
+		* array.
+		* @param other the array to copy.
+		*/
+		ArrayUint8(ArrayUint8 &other);
+
+		/**
 		* Deallocate the array and underlying buffers.
 		*/
 		~ArrayUint8();
@@ -397,6 +418,20 @@ namespace gimage {
 		uint8_t *d_data = NULL;
 	};
 
+	enum class Channel{ RED, BLUE, GREEN };
+
+	class GIMAGE_EXPORT RGBImage {
+	public:
+		RGBImage(int rows, int cols);
+		uint8_t at(int r, int c, gimage::Channel chan);
+		void set(int r, int c, gimage::Channel chan, uint8_t value);
+
+	private:
+		ArrayUint8 red;
+		ArrayUint8 blue;
+		ArrayUint8 green;
+	};
+
 	class GIMAGE_EXPORT MatrixD :  public DoubleArray {
 	public:
 		/**
@@ -427,6 +462,7 @@ namespace gimage {
 		* @return Array the resultant array. 
 		*/
 		MatrixD operator*(MatrixD other);
+
 	};
 }
 #endif

@@ -496,8 +496,16 @@ namespace gimage {
 		allocate(size());
 	}
 
+	DoubleArray::DoubleArray(DoubleArray &other) : Array(other.rows, other.cols, Type::DOUBLE){
+		allocate(other.size());
+		double* oData = static_cast<double*>(other.hostData());
+		std::memcpy(h_data, oData, totalSize());
+	}
+
 	DoubleArray::~DoubleArray() {
-		delete[] h_data;
+		if (h_data) {
+			delete[] h_data;
+		}
 		if (d_data) {
 			checkCudaErrors(cudaFree(d_data));
 			d_data = NULL;
@@ -593,6 +601,12 @@ namespace gimage {
 
 	ArrayUint16::ArrayUint16(int rows, int cols) : Array(rows, cols, Type::UINT16) {
 		allocate(size());
+	}
+
+	ArrayUint16::ArrayUint16(ArrayUint16 &other) : Array(other.rows, other.cols, Type::UINT16){
+		allocate(other.size());
+		uint16_t* oData = static_cast<uint16_t*>(other.hostData());
+		std::memcpy(h_data, oData, totalSize());
 	}
 
 	ArrayUint16::~ArrayUint16() {
@@ -691,6 +705,12 @@ namespace gimage {
 
 	ArrayUint8::ArrayUint8(int rows, int cols) : Array(rows, cols, Type::UINT8) {
 		allocate(size());
+	}
+
+	ArrayUint8::ArrayUint8(ArrayUint8 &other) : Array(other.rows, other.cols, Type::UINT8){
+		allocate(other.size());
+		uint8_t* oData = static_cast<uint8_t*>(other.hostData());
+		std::memcpy(h_data, oData, totalSize());
 	}
 
 	ArrayUint8::~ArrayUint8() {
@@ -811,11 +831,8 @@ namespace gimage {
 			for (int c = 0; c < outCols; c++) {
 				//find sum for this position. 
 				double sum = 0.0;
-				for (int i_r = 0; i_r < other.rows; i_r++) {
-					for (int i_c = 0; i_c < cols; i_c++) {
-						sum += other.at<double>(i_r, c) *
-							at<double>(r, i_c);
-					}
+				for (int i = 0; i < other.rows; i++) {
+					sum += other.at<double>(i, c) * at<double>(r, i);
 				}
 				out.setData<double>(r, c, sum);
 			}
@@ -1166,8 +1183,15 @@ namespace gimage {
 				//get input device pointer. 
 				d_in = static_cast<uint16_t*>(input.deviceData());
 				
+				GpuTimer timer;
+				timer.Start();
 				//call our gradient kernel
 				gradientAndDirection << <grid_size, block_size >> >(d_in, d_gradient, d_theta, d_kgx, d_kgy, numRows, numCols);
+				timer.Stop();
+				float gradMs = timer.Elapsed();
+#if PRINT_INFO
+				printf("Gradient kernel took %f ms\n", gradMs);
+#endif
 				//synchronize the device. 
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
@@ -1181,23 +1205,30 @@ namespace gimage {
 				nonMaxOut.gpuAlloc();
 				//get device pointer.
 				uint16_t* d_nMax_out = static_cast<uint16_t*>(nonMaxOut.deviceData());
+				
 				//set output to zeros.
-
 				checkCudaErrors(cudaMemset(d_out, 0, output.totalSize()));
-				GpuTimer timer;
 				timer.Start();
+				//perform non maximum suppression. 
 				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_nMax_out, numRows, numCols);
 				timer.Stop();
+				float nonMaxMs = timer.Elapsed();
+#if PRINT_INFO
+				printf("Non-maximum kernel took %f ms\n", nonMaxMs);
+#endif
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
 				timer.Start();
 				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols);
 				timer.Stop();
+				float hysMs = timer.Elapsed();
+#if PRINT_INFO
+				printf("Thresholding kernel took %f ms\n", hysMs);
+#endif
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
 				//copy result to gpu. 
 				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_out, output.totalSize(), cudaMemcpyDeviceToHost));
-
 
 				//free up used memory. 
 				input.gpuFree();
