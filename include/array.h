@@ -418,18 +418,12 @@ namespace gimage {
 		uint8_t *d_data = NULL;
 	};
 
-	enum class Channel{ RED, BLUE, GREEN };
+	class Image : public ArrayUint8 {
 
-	class GIMAGE_EXPORT RGBImage {
-	public:
-		RGBImage(int rows, int cols);
-		uint8_t at(int r, int c, gimage::Channel chan);
-		void set(int r, int c, gimage::Channel chan, uint8_t value);
+	};
 
-	private:
-		ArrayUint8 red;
-		ArrayUint8 blue;
-		ArrayUint8 green;
+	class Image16 : public ArrayUint16 {
+
 	};
 
 	class GIMAGE_EXPORT MatrixD :  public DoubleArray {

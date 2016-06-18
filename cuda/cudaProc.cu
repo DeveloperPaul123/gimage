@@ -480,6 +480,22 @@ __global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper,
 	}
 }
 
+template<typename T>
+__global__ void houghCircles(T* d_in, T* d_accumalator, int radius, int numRows, int numCols) {
+	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
+	int r = threadIdx.x + blockIdx.x*blockDim.x;
+	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	int totalSize = numRows*numCols;
+	if (index < totalSize) {
+		//TODO: Finish implementing hough circles, should go through all the 
+		//angles for a circle (i.e. 0 to 2pi) and then get a and b. Save these
+		//"votes" in the accumulator matrix. Will find the maximums of this accumulator
+		//matrix later. 
+	}
+}
+
 /**
 * Namespace for all gimage functions.
 */
