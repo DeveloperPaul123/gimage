@@ -68,6 +68,33 @@ TEST(gimage, window_level_Test) {
 	cv::waitKey(0);
 }
 
+TEST(gimage, rbg_to_gray_test) {
+	cv::Mat image = cv::imread("forrest.jpg", CV_LOAD_IMAGE_COLOR);
+	cv::Mat imageRGBA;
+	cv::cvtColor(image, imageRGBA, CV_BGR2RGB);
+	int numRows = image.rows;
+	int numCols = image.cols;
+	gimage::ArrayUint8 red(numRows, numCols);
+	gimage::ArrayUint8 green(numRows, numCols);
+	gimage::ArrayUint8 blue(numRows, numCols);
+	for (int r = 0; r < numRows; r++) {
+		for (int c = 0; c < numCols; c++) {
+			cv::Vec3b rgb = imageRGBA.at<cv::Vec3b>(r, c);
+			red.setData<uint8_t>(r, c, rgb[0]);
+			green.setData<uint8_t>(r, c, rgb[1]);
+			blue.setData<uint8_t>(r, c, rgb[2]);
+		}
+	}
+	gimage::ArrayUint8 gray(numRows, numCols);
+	gimage::rgbToGray(red, green, blue, gray);
+	cv::Mat result(image.rows, image.cols, CV_8U,
+		static_cast<uint8_t*>(gray.hostData()), cv::Mat::AUTO_STEP);
+	cv::imshow("input", imageRGBA);
+	cv::imshow("output", result);
+	cv::waitKey(0);
+}
+
+
 TEST(gimage, canny_test) {
 	cv::Mat input = cv::imread("test.tif", CV_16U);
 	gimage::ArrayUint16 rawImage(input.rows, input.cols);
@@ -84,12 +111,8 @@ TEST(gimage, canny_test) {
 	cv::imshow("Input", input);
 	cv::imshow("Output", result);
 	cv::waitKey(0);
-	cv::imwrite("canny_out.tif", result);
 }
 
-TEST(gimage, rbg_to_gray_test) {
-	cv::Mat image = cv::imread("forrest.jpg", CV_8UC3);
-}
 
 TEST(gimage, matrix_double_mult_test) {
 	gimage::MatrixD a(2, 2);

@@ -903,8 +903,8 @@ namespace gimage {
 		//gpu timer for 
 		GpuTimer timer;
 		timer.Start();
-		colorToGrey << <grid_size, block_size >> >(static_cast<uint8_t*>(red.hostData()), static_cast<uint8_t*>(green.hostData()),
-			static_cast<uint8_t*>(blue.hostData()), static_cast<uint8_t*>(gray.hostData()), numRows, numCols);
+		colorToGrey << <grid_size, block_size >> >(static_cast<uint8_t*>(red.deviceData()), static_cast<uint8_t*>(green.deviceData()),
+			static_cast<uint8_t*>(blue.deviceData()), static_cast<uint8_t*>(gray.deviceData()), numRows, numCols);
 		timer.Stop();
 		float ms = timer.Elapsed();
 #if PRINT_INFO
@@ -913,6 +913,7 @@ namespace gimage {
 		//copy results back.
 		gray.memcpy(MemcpyDirection::DEVICE_TO_HOST);
 
+		//free gpu memory. 
 		red.gpuFree();
 		green.gpuFree();
 		blue.gpuFree();
