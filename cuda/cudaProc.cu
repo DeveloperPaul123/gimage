@@ -860,7 +860,7 @@ namespace gimage {
 	* Converts a color image to a grayscale image.
 	* @param
 	*/
-	void GIMAGE_EXPORT rgbToGray(Array& red, Array& green, Array& blue, Array& gray) {
+	void GIMAGE_EXPORT rgbToGray(ArrayUint8& red, ArrayUint8& green, ArrayUint8& blue, ArrayUint8& gray) {
 
 		//allocate arrays and move data to device. 
 		red.gpuAlloc();
