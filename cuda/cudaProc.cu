@@ -860,17 +860,21 @@ namespace gimage {
 	* Converts a color image to a grayscale image.
 	* @param
 	*/
-	void GIMAGE_EXPORT rgbToGray(ArrayUint8 red, ArrayUint8 green, ArrayUint8 blue, ArrayUint8 gray) {
+	void GIMAGE_EXPORT rgbToGray(Array& red, Array& green, Array& blue, Array& gray) {
 
 		//allocate arrays and move data to device. 
 		red.gpuAlloc();
-		red.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 		green.gpuAlloc();
-		green.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 		blue.gpuAlloc();
-		blue.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 		gray.gpuAlloc();
+		
+		//move data to device.
+		red.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		green.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		blue.memcpy(MemcpyDirection::HOST_TO_DEVICE);
 
+		//set the gray image to nothing.
+		checkCudaErrors(cudaMemset(static_cast<uint8_t*>(gray.deviceData()), 0, gray.totalSize()));
 		int numRows = red.rows;
 		int numCols = red.cols;
 
@@ -906,7 +910,11 @@ namespace gimage {
 		colorToGrey << <grid_size, block_size >> >(static_cast<uint8_t*>(red.deviceData()), static_cast<uint8_t*>(green.deviceData()),
 			static_cast<uint8_t*>(blue.deviceData()), static_cast<uint8_t*>(gray.deviceData()), numRows, numCols);
 		timer.Stop();
+		cudaDeviceSynchronize();
+		checkCudaErrors(cudaGetLastError()); 
+		//measure how long the kernel took
 		float ms = timer.Elapsed();
+
 #if PRINT_INFO
 		printf("RGB to gray kernel took %f ms.\n", ms);
 #endif

@@ -70,8 +70,6 @@ TEST(gimage, window_level_Test) {
 
 TEST(gimage, rbg_to_gray_test) {
 	cv::Mat image = cv::imread("forrest.jpg", CV_LOAD_IMAGE_COLOR);
-	cv::Mat imageRGBA;
-	cv::cvtColor(image, imageRGBA, CV_BGR2RGB);
 	int numRows = image.rows;
 	int numCols = image.cols;
 	gimage::ArrayUint8 red(numRows, numCols);
@@ -79,7 +77,7 @@ TEST(gimage, rbg_to_gray_test) {
 	gimage::ArrayUint8 blue(numRows, numCols);
 	for (int r = 0; r < numRows; r++) {
 		for (int c = 0; c < numCols; c++) {
-			cv::Vec3b rgb = imageRGBA.at<cv::Vec3b>(r, c);
+			cv::Vec3b rgb = image.at<cv::Vec3b>(r, c);
 			red.setData<uint8_t>(r, c, rgb[0]);
 			green.setData<uint8_t>(r, c, rgb[1]);
 			blue.setData<uint8_t>(r, c, rgb[2]);
@@ -87,10 +85,14 @@ TEST(gimage, rbg_to_gray_test) {
 	}
 	gimage::ArrayUint8 gray(numRows, numCols);
 	gimage::rgbToGray(red, green, blue, gray);
-	cv::Mat result(image.rows, image.cols, CV_8U,
+	cv::Mat result(image.rows, image.cols, CV_8UC1,
 		static_cast<uint8_t*>(gray.hostData()), cv::Mat::AUTO_STEP);
-	cv::imshow("input", imageRGBA);
-	cv::imshow("output", result);
+	cv::Mat imgShow;
+	cv::Mat resultShow;
+	cv::resize(image, imgShow, cv::Size(), 0.15, 0.15);
+	cv::resize(result, resultShow, cv::Size(), 0.15, 0.15);
+	cv::imshow("input", imgShow);
+	cv::imshow("output", resultShow);
 	cv::waitKey(0);
 }
 

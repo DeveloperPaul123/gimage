@@ -18,7 +18,7 @@ namespace gimage {
 	* @param blue the blue channel of the image to convert.
 	* @param output the output gray scale image. 
 	*/
-	void GIMAGE_EXPORT rgbToGray(ArrayUint8 red, ArrayUint8 green, ArrayUint8 blue, ArrayUint8 output);
+	void GIMAGE_EXPORT rgbToGray(Array& red, Array& green, Array& blue, Array& output);
 
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.
