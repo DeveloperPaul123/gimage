@@ -68,6 +68,24 @@ TEST(gimage, window_level_Test) {
 	cv::waitKey(0);
 }
 
+TEST(gimage, canny_test) {
+	cv::Mat input = cv::imread("test.tif", CV_16U);
+	gimage::ArrayUint16 rawImage(input.rows, input.cols);
+	gimage::ArrayUint16 out(input.rows, input.cols);
+	for (size_t i = 0; i < input.rows; ++i) {
+		for (size_t j = 0; j < input.cols; ++j){
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData<uint16_t>(i, j, value);
+		}
+	}
+	gimage::cannyEdgeDetector(rawImage, out, input.rows, input.cols, 1.4f, 50000, 55000);
+	cv::Mat result(input.rows, input.cols, CV_16U,
+		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
+	cv::imshow("Input", input);
+	cv::imshow("Output", result);
+	cv::waitKey(0);
+}
+
 TEST(gimage, rbg_to_gray_test) {
 	cv::Mat image = cv::imread("forrest.jpg", CV_LOAD_IMAGE_COLOR);
 	int numRows = image.rows;
@@ -95,26 +113,6 @@ TEST(gimage, rbg_to_gray_test) {
 	cv::imshow("output", resultShow);
 	cv::waitKey(0);
 }
-
-
-TEST(gimage, canny_test) {
-	cv::Mat input = cv::imread("test.tif", CV_16U);
-	gimage::ArrayUint16 rawImage(input.rows, input.cols);
-	gimage::ArrayUint16 out(input.rows, input.cols);
-	for (size_t i = 0; i < input.rows; ++i) {
-		for (size_t j = 0; j < input.cols; ++j){
-			uint16_t value = input.at<uint16_t>(i, j);
-			rawImage.setData<uint16_t>(i, j, value);
-		}
-	}
-	gimage::cannyEdgeDetector(rawImage, out, input.rows, input.cols, 1.4f, 20, 300);
-	cv::Mat result(input.rows, input.cols, CV_16U,
-		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
-	cv::imshow("Input", input);
-	cv::imshow("Output", result);
-	cv::waitKey(0);
-}
-
 
 TEST(gimage, matrix_double_mult_test) {
 	gimage::MatrixD a(2, 2);

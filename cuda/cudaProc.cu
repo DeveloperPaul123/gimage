@@ -214,49 +214,48 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 	//get unique point in image by finding position in grid.
 	int index = c + r*blockDim.x*gridDim.x;
 
-	if (index >= numRows*numCols) {
-		return;
-	}
+	if (index < numRows*numCols) {
+		//run convolution on the image with the sobel filters. 
+		float x_res = 0.0f;
+		float y_res = 0.0f;
+		int kernelSize = 3;
+		//apply the filter. 
+		for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
+			for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
+				//Find the global image position for this filter position
+				//clamp to boundary of the image
+				int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
+				int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
+				//make sure we don't index rows and columns that don't exist. 
+				int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
+				int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
 
-	//run convolution on the image with the sobel filters. 
-	float x_res = 0.0f;
-	float y_res = 0.0f;
-	int kernelSize = 3;
-	//apply the filter. 
-	for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
-		for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
-			//Find the global image position for this filter position
-			//clamp to boundary of the image
-			int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
-			int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
-			//make sure we don't index rows and columns that don't exist. 
-			int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
-			int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
-
-			float image_value = static_cast<float>(d_in[image_r * numCols + image_c]);
-			float filter_x = static_cast<float>(k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
-			float filter_y = static_cast<float>(k_gy[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
-			//add filter value to result.
-			x_res += image_value*filter_x;
-			y_res += image_value*filter_y;
+				float image_value = static_cast<float>(d_in[image_r * numCols + image_c]);
+				float filter_x = static_cast<float>(k_gx[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
+				float filter_y = static_cast<float>(k_gy[(filter_r + kernelSize / 2) * kernelSize + filter_c + kernelSize / 2]);
+				//add filter value to result.
+				x_res += image_value*filter_x;
+				y_res += image_value*filter_y;
+			}
 		}
-	}
 
-	//store the gradient magnitude. 
-	d_gradient[index] = static_cast<T>(sqrtf(powf(x_res, 2.0f) + powf(y_res, 2.0f)));
-	double angle = (atan2f(y_res, x_res)) / PI * 180.0;
-	int correctAngle;
-	/* Convert actual edge direction to approximate value */
-	if (((angle < 22.5) && (angle > -22.5)) || (angle > 157.5) || (angle < -157.5))
-		correctAngle = 0;
-	if (((angle > 22.5) && (angle < 67.5)) || ((angle < -112.5) && (angle > -157.5)))
-		correctAngle = 45;
-	if (((angle > 67.5) && (angle < 112.5)) || ((angle < -67.5) && (angle > -112.5)))
-		correctAngle = 90;
-	if (((angle > 112.5) && (angle < 157.5)) || ((angle < -22.5) && (angle > -67.5)))
-		correctAngle = 135;
-	//store the angle. 
-	d_theta[index] = correctAngle;
+		//store the gradient magnitude. 
+		float result = sqrtf(powf(x_res, 2.0f) + powf(y_res, 2.0f));
+		d_gradient[index] = static_cast<T>(result);
+		double angle = (atan2f(y_res, x_res)) / PI * 180.0;
+		int correctAngle;
+		/* Convert actual edge direction to approximate value */
+		if (((angle < 22.5) && (angle > -22.5)) || (angle > 157.5) || (angle < -157.5))
+			correctAngle = 0;
+		if (((angle > 22.5) && (angle < 67.5)) || ((angle < -112.5) && (angle > -157.5)))
+			correctAngle = 45;
+		if (((angle > 67.5) && (angle < 112.5)) || ((angle < -67.5) && (angle > -112.5)))
+			correctAngle = 90;
+		if (((angle > 112.5) && (angle < 157.5)) || ((angle < -22.5) && (angle > -67.5)))
+			correctAngle = 135;
+		//store the angle. 
+		d_theta[index] = correctAngle;
+	}	
 }
 
 /**
@@ -275,58 +274,58 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 template<typename T>
 __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int numRows, int numCols) {
 	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
-	int r = threadIdx.x + blockIdx.x*blockDim.x;
-	int c = threadIdx.y + blockIdx.y*blockDim.y;
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
 	//get unique point in image by finding position in grid.
 	int index = c + r*blockDim.x*gridDim.x;
 
-	if (index >= numRows*numCols) {
-		return;
-	}
-
-	T value = d_gradMag[index];
-	int direction = d_theta[index];
-	int fCheck, sCheck = -1;
-	switch (direction) {
-	case 0:
-		//horizontal
-		fCheck = r + (c-1)*blockDim.x*gridDim.x;
-		sCheck = r + (c+1)*blockDim.x*gridDim.x;
-		break;
-	case 45:
-		//one row less one column more
-		fCheck = (r - 1) + (c+1)*blockDim.x*gridDim.x;
-		sCheck = (r + 1) + (c-1)*blockDim.x*gridDim.x;
-		break;
-	case 90:
-		//vertical
-		fCheck = (r - 1) + c*blockDim.x*gridDim.x;
-		sCheck = (r + 1) + c*blockDim.x*gridDim.x;
-		break;
-	case 135:
-		fCheck = (r - 1) + (c -1)*blockDim.x*gridDim.x;
-		sCheck = (r + 1) + (c + 1)*blockDim.x*gridDim.x;
-		break;
-	}
-
-	if (fCheck < numRows*numCols && sCheck < numRows*numCols) {
-		T v1 = d_gradMag[fCheck];
-		T v2 = d_gradMag[sCheck];
-		int maxIndex = -1;
-		if (value > v1 && value > v2) {
-			maxIndex = index;
-		}
-		else if (value < v1 && v1 > v2) {
-			maxIndex = fCheck;
-		}
-		else if (value < v2 && v2 > v1){
-			maxIndex = sCheck;
+	if (index < numRows*numCols) {
+		T value = d_gradMag[index];
+		int direction = d_theta[index];
+		int fCheck, sCheck = -1;
+		switch (direction) {
+		case 0:
+			//horizontal
+			fCheck = r + (c - 1)*blockDim.x*gridDim.x;
+			sCheck = r + (c + 1)*blockDim.x*gridDim.x;
+			break;
+		case 45:
+			//one row less one column more
+			fCheck = (r - 1) + (c + 1)*blockDim.x*gridDim.x;
+			sCheck = (r + 1) + (c - 1)*blockDim.x*gridDim.x;
+			break;
+		case 90:
+			//vertical
+			fCheck = (r - 1) + c*blockDim.x*gridDim.x;
+			sCheck = (r + 1) + c*blockDim.x*gridDim.x;
+			break;
+		case 135:
+			fCheck = (r - 1) + (c - 1)*blockDim.x*gridDim.x;
+			sCheck = (r + 1) + (c + 1)*blockDim.x*gridDim.x;
+			break;
 		}
 
-		if (maxIndex > 0 && maxIndex < numRows*numCols) {
-			d_out[maxIndex] = d_gradMag[maxIndex];	
+		if (fCheck < numRows*numCols && sCheck < numRows*numCols && fCheck >= 0 && sCheck >= 0) {
+			T v1 = d_gradMag[fCheck];
+			T v2 = d_gradMag[sCheck];
+			int maxIndex = -1;
+			if (value > v1 && value > v2) {
+				maxIndex = index;
+			}
+			else if (value < v1 && v1 > v2) {
+				maxIndex = fCheck;
+			}
+			else if (value < v2 && v2 > v1){
+				maxIndex = sCheck;
+			}
+
+			if (maxIndex > 0 && maxIndex < numRows*numCols) {
+				d_out[maxIndex] = d_gradMag[maxIndex];
+			}
 		}
 	}
+
+
 }
 
 /**
@@ -342,140 +341,48 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 * @param numCols the number of columns in all the arrays
 */
 template<typename T> 
-__global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper, int lower, int numRows, int numCols) {
+__global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper, int lower, int numRows, int numCols, T max) {
 	//get row and column in the current grid (this should be a sub set of the image if it is large enough.
 	int r = threadIdx.x + blockIdx.x*blockDim.x;
 	int c = threadIdx.y + blockIdx.y*blockDim.y;
 	//get unique point in image by finding position in grid.
+	int apron = 5;
 	int index = c + r*blockDim.x*gridDim.x;
 	int totalSize = numRows*numCols;
 	if (index < totalSize) {
 		T value = d_in[index];
-		if (static_cast<int>(value) >= upper) {
-			d_out[index] = value;
+		if (static_cast<int>(value) > upper) {
+			d_out[index] = max;
 		}
-		else if (static_cast<int>(value) <= lower) {
+		else if (static_cast<int>(value) < lower) {
 			d_out[index] = static_cast<T>(0);
 		}
 		else {
 			//inbetween both values so walk the path. 
 			//get the direction.
-			int totBlockSize = blockDim.x*gridDim.x;
-			int direction = theta[index];
-			int rowOffset, colOffset = 1;
-			bool foundFirst = false;
-			while (true) {
-				//traverse the path.
-				int idxOne = -1;
-				switch (direction) {
-				case 0:
-					//traverse column wise. 
-					idxOne = r + (c - colOffset)*totBlockSize;
-					break;
-				case 45:
-					idxOne = (r - rowOffset) + (c + colOffset)*totBlockSize;
-					break;
-				case 90:
-					idxOne = (r - rowOffset) + c*totBlockSize;
-					break;
-				case 135:
-					idxOne = (r - rowOffset) + (c - colOffset)*totBlockSize;
-					break;
-				}
-
-				if (idxOne < totalSize && idxOne >= 0) {
-					T v1 = d_in[idxOne];
-					int dirOne = theta[idxOne];
-					int v1Cast = static_cast<int>(v1);
-
-					if (v1Cast <= lower) {
-						//below lower threshold so no good. 
-						foundFirst = false;
-						break;
-					}
-					else if (v1Cast >= upper) {
-						//def an edge so we're good. 
-						foundFirst = true;
-						//go ahead and set the value.
-						d_out[index] = value;
-						break;
-					}
-					else if (dirOne != direction) {
-						foundFirst = false;
-						break;
-					}
-					else {
-						//increment and continue.
-						colOffset++;
-						rowOffset++;
-					}
-				}
-				else {
-					if (r + rowOffset >= numRows || c + colOffset >= numCols) {
-						foundFirst = false;
+			bool maxFound = false;
+			for (int ap_r = -apron / 2; ap_r <= apron / 2; ap_r++) {
+				for (int ap_c = -apron / 2; ap_c <= apron / 2; ap_c++) {
+					//Find the global image position for this filter position
+					//clamp to boundary of the image
+					int rowCompare = r + ap_r >= 0 ? r + ap_r : 0;
+					int colCompare = c + ap_c >= 0 ? c + ap_c : 0;
+					//make sure we don't index rows and columns that don't exist. 
+					int image_r = rowCompare <= static_cast<int>(numRows - 1) ? rowCompare : static_cast<int>(numRows - 1);
+					int image_c = colCompare <= static_cast<int>(numCols - 1) ? colCompare : static_cast<int>(numCols - 1);
+					T image_value = d_in[image_r * numCols + image_c];
+					if (image_value >= upper) {
+						maxFound = true;
 						break;
 					}
 				}
-				
-
 			}
-
-			//reset offsets. 
-			colOffset = 1;
-			rowOffset = 1;
-
-			if (!foundFirst) {
-				while (true) {
-					int idxTwo = -1;
-					switch (direction) {
-					case 0:
-						//traverse column wise. 
-						idxTwo = r + (c + colOffset)*totBlockSize;
-						break;
-					case 45:
-						idxTwo = (r + rowOffset) + (c - colOffset)*totBlockSize;
-						break;
-					case 90:
-						idxTwo = (r + rowOffset) + c*totBlockSize;
-						break;
-					case 135:
-						idxTwo = (r + rowOffset) + (c + colOffset)*totBlockSize;
-						break;
-					}
-
-					if (idxTwo < totalSize && idxTwo >= 0) {
-
-						T v2 = d_in[idxTwo];
-						int dirTwo = theta[idxTwo];
-						int v2Cast = static_cast<int>(v2);
-
-						if (v2Cast <= lower) {
-							//below lower threshold so no good. 
-							d_out[index] = static_cast<T>(0);
-							break;
-						}
-						else if (v2Cast >= upper) {
-							//def an edge so we're good. 
-							d_out[index] = value;
-							break;
-						}
-						else if (dirTwo != direction) {
-							d_out[index] = static_cast<T>(0);
-							break;
-						}
-						else {
-							//increment and continue.
-							colOffset++;
-							rowOffset++;
-						}
-					}
-					else {
-						if (r + rowOffset >= numRows || c + colOffset >= numCols) {
-							d_out[index] = static_cast<T>(0);
-						}
-					}
-				}
-			}	
+			if (maxFound) {
+				d_out[index] = max;
+			}
+			else {
+				d_out[index] = static_cast<T>(0);
+			}
 		}
 	}
 }
@@ -1242,9 +1149,9 @@ namespace gimage {
 				printf("Non-maximum kernel took %f ms\n", nonMaxMs);
 #endif
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
-
+				uint16_t max = std::numeric_limits<uint16_t>::max();
 				timer.Start();
-				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols);
+				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols, max);
 				timer.Stop();
 				float hysMs = timer.Elapsed();
 #if PRINT_INFO
@@ -1253,7 +1160,7 @@ namespace gimage {
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
 				//copy result to gpu. 
-				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_out, output.totalSize(), cudaMemcpyDeviceToHost));
+				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_nMax_out, output.totalSize(), cudaMemcpyDeviceToHost));
 
 				//free up used memory. 
 				input.gpuFree();
