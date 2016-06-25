@@ -139,6 +139,42 @@ __global__ void gaussian(T *d_in, T *d_out, const float* const filter, int numRo
 	d_out[offset] = static_cast<T>(result);
 }
 
+/**
+* General convolution kernel.
+* @param d_in input data array.
+* @param d_out output data array.
+* @param kernel the kernel to convolve with the data.
+* @param inRows rows in the input data and output
+* @param inCols cols in the input data and output
+* @param kernelSize size of the kernel, note that this must be odd. 
+*/
+template<typename T>
+__global__ void convolve(T* d_in, float* d_out, float* kernel, int inRows, int inCols, int kernelSize) {
+	assert(kernelSize % 2 == 1);
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	if (index < inRows*inCols) {
+		float result = 0.0f;
+		for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
+			for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
+				int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
+				int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
+
+				int image_r = rowCompare <= static_cast<int>(inRows - 1) ? rowCompare : static_cast<int>(inRows - 1);
+				int image_c = colCompare <= static_cast<int>(inCols - 1) ? colCompare : static_cast<int>(inCols - 1);
+
+				float image_value = static_cast<float>(d_in[image_r*inCols + image_c]);
+				float filter_value = kernel[(filter_r + kernelSize / 2)*kernelSize + filter_c + kernelSize / 2];
+				result += image_value*filter_value;
+			}
+		}
+		d_out[index] = result;
+	}
+}
+
 
 /**
 * Generates a look up table used during window and leveling. 
@@ -1131,6 +1167,34 @@ namespace gimage {
 				output.gpuAlloc();
 				d_out = static_cast<uint16_t*>(output.deviceData());
 
+				//create laplacian of gaussian kernel.
+				int blurSize = 7;
+				float sigma = 1.1f;
+				float *LoGKernel = new float[blurSize*blurSize];
+				float filterSum = 0.f;
+				float sigmaSq = powf(sigma, 2.0f);
+				float sigmaFourth = powf(sigma, 4.0f);
+				for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
+					for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
+						float ySq = powf(r, 2.0);
+						float xSq = powf(c, 2.0);
+						float quo = (xSq + ySq) / (2 * sigmaSq);
+						//from http://homepages.inf.ed.ac.uk/rbf/HIPR2/log.htm compute the laplacian of a gaussian so we convolve once for
+						//a second derivative filter.
+						float filterValue = (-1 / (PI*sigmaFourth))*(1 - quo) * expf(-1 * quo);
+						LoGKernel[(r + blurSize / 2) * blurSize + c + blurSize / 2] = filterValue;
+						filterSum += filterValue;
+					}
+				}
+
+				float* d_kernel;
+				float* convOut = new float[numRows*numCols];
+				float* dConvOut;
+				checkCudaErrors(cudaMalloc((void**)&dConvOut, sizeof(float)*numRows*numCols));
+				checkCudaErrors(cudaMalloc((void**)&d_kernel, sizeof(float)*blurSize*blurSize));
+
+				checkCudaErrors(cudaMemcpy(d_kernel, LoGKernel, sizeof(float)*blurSize*blurSize, cudaMemcpyHostToDevice));
+
 				//create non maximum suppression output.
 				ArrayUint16 nonMaxOut(output.rows, output.cols);
 				//allocate on GPU.
@@ -1141,14 +1205,20 @@ namespace gimage {
 				//set output to zeros.
 				checkCudaErrors(cudaMemset(d_out, 0, output.totalSize()));
 				timer.Start();
-				//perform non maximum suppression. 
-				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_nMax_out, numRows, numCols);
+				//perform non maximum suppression using second derivative. Need to 
+				//find zero crossings in the resulting dConvOut
+				convolve << <grid_size, block_size >> >(d_in, dConvOut, d_kernel, numRows, numCols, blurSize);
 				timer.Stop();
 				float nonMaxMs = timer.Elapsed();
 #if PRINT_INFO
-				printf("Non-maximum kernel took %f ms\n", nonMaxMs);
+				printf("Convolution kernel took %f ms\n", nonMaxMs);
 #endif
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+				//copy data back to convOut
+				checkCudaErrors(cudaMemcpy(convOut, dConvOut, sizeof(float)*numRows*numCols, cudaMemcpyDeviceToHost));
+				//TODO: Find zero crossings.
+				
 				uint16_t max = std::numeric_limits<uint16_t>::max();
 				timer.Start();
 				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols, max);
