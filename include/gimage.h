@@ -12,6 +12,22 @@
 namespace gimage {
 
 	/**
+	* Adds two arrays together. 
+	* @param T1 the first array.
+	* @param T2 the second array.
+	* @param output the result of the addition.
+	*/
+	void GIMAGE_EXPORT add(Array& T1, Array& T2, Array& output);
+
+	/**
+	* Subtracts two arrays. Note this will perform T2 - T1.
+	* @param T1 and first array.
+	* @param T2 the second array.
+	* @param output the result of the subtraction.
+	*/
+	void GIMAGE_EXPORT subtract(Array& T1, Array& T2, Array& output);
+
+	/**
 	* Converts an 8 bit RGB image to grayscale. 
 	* @param red the red channel of the image to convert.
 	* @param green the green channel of the image to convert.
@@ -19,6 +35,25 @@ namespace gimage {
 	* @param output the output gray scale image. 
 	*/
 	void GIMAGE_EXPORT rgbToGray(ArrayUint8& red, ArrayUint8& green, ArrayUint8& blue, ArrayUint8& output);
+
+	/**
+	* Thresholds a given image and puts the result in the output.
+	* @param input the image to threshold.
+	* @param output the resulting thresholded image.
+	* @param threshold the threshold. 
+	*/
+	void GIMAGE_EXPORT threshold(Array& input, Array& output, int threshold);
+
+	/**
+	* Performs convolution on the input image using the laplacian of a the gaussian blur operator.
+	* @param input input image, can be 16 bit, 8 bit or double
+	* @param output double array output. Note that this array will contain negative values.
+	* @param sigma, sigma for the LOG
+	* @param numRows number of rows in the input and output image.
+	* @param numCols the number of columns in the input and output image.
+	* @param logSize size of the kernel (must be odd).
+	*/
+	void GIMAGE_EXPORT laplacianOfGaussian(Array& input, DoubleArray& output, float sigma, int numRows, int numCols, int logSize);
 
 	/**
 	* Performs a Gaussian blur on a given image and stores it in the output.

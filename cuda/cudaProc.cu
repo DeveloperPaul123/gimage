@@ -1,6 +1,7 @@
 #include "gimage.h"
 #include "array.h"
 #include "timer.h"
+#include <list>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
@@ -10,6 +11,11 @@
 #define PI 3.14159265359
 #define PRINT_INFO 1
 #define checkCudaErrors(val) check( (val), #val, __FILE__, __LINE__)
+
+struct gPoint {
+	int row = 0;
+	int col = 0;
+};
 
 /**
 * Template function for checking cuda errors. 
@@ -63,6 +69,46 @@ int selectDevice() {
 	}
 	else {
 		return 0;
+	}
+}
+
+/**
+* Helper function to calculate the grid size for a kernel given the block size, number of rows and columns.
+* @param blocksize the block size.
+* @param numRows the number of rows in the image.
+* @param numCols the number of columns in the image. 
+* @return dim3 the grid size.
+*/
+dim3 getGridSize(dim3 blockSize, int numRows, int numCols) {
+	dim3 grid_size;
+	grid_size.x = (numCols + blockSize.x - 1) / blockSize.x;  /*< Greater than or equal to image width */
+	grid_size.y = (numRows + blockSize.y - 1) / blockSize.y; /*< Greater than or equal to image height */
+	return grid_size;
+}
+
+template<typename T>
+__global__ void cudaAdd(T* d_T1, T* d_T2, T* d_out, int numRows, int numCols) {
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	int totalSize = numRows*numCols;
+	if (index < totalSize) {
+		d_out[index] = d_T1[index] + d_T2[index];
+	}
+}
+
+template<typename T>
+__global__ void cudaSubtract(T* d_T1, T* d_T2, T* d_out, int numRows, int numCols) {
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	int totalSize = numRows*numCols;
+	if (index < totalSize) {
+		d_out[index] = d_T2[index] - d_T1[index];
 	}
 }
 
@@ -149,7 +195,7 @@ __global__ void gaussian(T *d_in, T *d_out, const float* const filter, int numRo
 * @param kernelSize size of the kernel, note that this must be odd. 
 */
 template<typename T>
-__global__ void convolve(T* d_in, float* d_out, float* kernel, int inRows, int inCols, int kernelSize) {
+__global__ void convolvef(T* d_in, float* d_out, float* kernel, int inRows, int inCols, int kernelSize) {
 	assert(kernelSize % 2 == 1);
 	//get row and column in blcok
 	int r = threadIdx.y + blockIdx.y*blockDim.y;
@@ -172,6 +218,60 @@ __global__ void convolve(T* d_in, float* d_out, float* kernel, int inRows, int i
 			}
 		}
 		d_out[index] = result;
+	}
+}
+
+/**
+* General convolution kernel.
+* @param d_in input data array.
+* @param d_out output data array.
+* @param kernel the kernel to convolve with the data.
+* @param inRows rows in the input data and output
+* @param inCols cols in the input data and output
+* @param kernelSize size of the kernel, note that this must be odd.
+*/
+template<typename T>
+__global__ void convolve(T* d_in, double* d_out, double* kernel, int inRows, int inCols, int kernelSize) {
+	assert(kernelSize % 2 == 1);
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	if (index < inRows*inCols) {
+		float result = 0.0f;
+		for (int filter_r = -kernelSize / 2; filter_r <= kernelSize / 2; ++filter_r) {
+			for (int filter_c = -kernelSize / 2; filter_c <= kernelSize / 2; ++filter_c) {
+				int rowCompare = r + filter_r >= 0 ? r + filter_r : 0;
+				int colCompare = c + filter_c >= 0 ? c + filter_c : 0;
+
+				int image_r = rowCompare <= static_cast<int>(inRows - 1) ? rowCompare : static_cast<int>(inRows - 1);
+				int image_c = colCompare <= static_cast<int>(inCols - 1) ? colCompare : static_cast<int>(inCols - 1);
+
+				double image_value = static_cast<double>(d_in[image_r*inCols + image_c]);
+				double filter_value = kernel[(filter_r + kernelSize / 2)*kernelSize + filter_c + kernelSize / 2];
+				result += image_value*filter_value;
+			}
+		}
+		d_out[index] = result;
+	}
+}
+
+template<typename T>
+__global__ void thresh(T* d_in, T* d_out, T threshold, T max, int numRows, int numCols) {
+	//get row and column in blcok
+	int r = threadIdx.y + blockIdx.y*blockDim.y;
+	int c = threadIdx.x + blockIdx.x*blockDim.x;
+	//get unique point in image by finding position in grid.
+	int index = c + r*blockDim.x*gridDim.x;
+	if (index < numRows*numCols) {
+		T value = d_in[index];
+		if (value < threshold) {
+			d_out[index] = static_cast<T>(0);
+		}
+		else {
+			d_out[index] = max;
+		}
 	}
 }
 
@@ -281,14 +381,18 @@ __global__ void gradientAndDirection(T *d_in, T *d_gradient, int* d_theta, int* 
 		double angle = (atan2f(y_res, x_res)) / PI * 180.0;
 		int correctAngle;
 		/* Convert actual edge direction to approximate value */
-		if (((angle < 22.5) && (angle > -22.5)) || (angle > 157.5) || (angle < -157.5))
+		if (((angle < 22.5) && (angle > -22.5)) || (angle > 157.5) || (angle < -157.5)) {
 			correctAngle = 0;
-		if (((angle > 22.5) && (angle < 67.5)) || ((angle < -112.5) && (angle > -157.5)))
+		}
+		else if (((angle > 22.5) && (angle < 67.5)) || ((angle < -112.5) && (angle > -157.5))) {
 			correctAngle = 45;
-		if (((angle > 67.5) && (angle < 112.5)) || ((angle < -67.5) && (angle > -112.5)))
+		}
+		else if (((angle > 67.5) && (angle < 112.5)) || ((angle < -67.5) && (angle > -112.5))) {
 			correctAngle = 90;
-		if (((angle > 112.5) && (angle < 157.5)) || ((angle < -22.5) && (angle > -67.5)))
+		}
+		else if (((angle > 112.5) && (angle < 157.5)) || ((angle < -22.5) && (angle > -67.5))) {
 			correctAngle = 135;
+		}
 		//store the angle. 
 		d_theta[index] = correctAngle;
 	}	
@@ -327,6 +431,7 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 			break;
 		case 45:
 			//one row less one column more
+			//diagonal, NE and SW
 			fCheck = (r - 1) + (c + 1)*blockDim.x*gridDim.x;
 			sCheck = (r + 1) + (c - 1)*blockDim.x*gridDim.x;
 			break;
@@ -336,6 +441,7 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 			sCheck = (r + 1) + c*blockDim.x*gridDim.x;
 			break;
 		case 135:
+			//diagonal, NW and SE
 			fCheck = (r - 1) + (c - 1)*blockDim.x*gridDim.x;
 			sCheck = (r + 1) + (c + 1)*blockDim.x*gridDim.x;
 			break;
@@ -344,19 +450,13 @@ __global__ void nonMaximumSuppression(T* d_gradMag, int* d_theta, T* d_out, int 
 		if (fCheck < numRows*numCols && sCheck < numRows*numCols && fCheck >= 0 && sCheck >= 0) {
 			T v1 = d_gradMag[fCheck];
 			T v2 = d_gradMag[sCheck];
-			int maxIndex = -1;
-			if (value > v1 && value > v2) {
-				maxIndex = index;
+			int v1Dir = d_theta[fCheck];
+			int v2Dir = d_theta[sCheck];
+			if (value < v1 || value < v2) {
+				d_out[index] = 0;
 			}
-			else if (value < v1 && v1 > v2) {
-				maxIndex = fCheck;
-			}
-			else if (value < v2 && v2 > v1){
-				maxIndex = sCheck;
-			}
-
-			if (maxIndex > 0 && maxIndex < numRows*numCols) {
-				d_out[maxIndex] = d_gradMag[maxIndex];
+			else {
+				d_out[index] = value;
 			}
 		}
 	}
@@ -382,15 +482,15 @@ __global__ void hysteresisThresholding(T* d_in, T* d_out, int* theta, int upper,
 	int r = threadIdx.x + blockIdx.x*blockDim.x;
 	int c = threadIdx.y + blockIdx.y*blockDim.y;
 	//get unique point in image by finding position in grid.
-	int apron = 5;
+	int apron = 3;
 	int index = c + r*blockDim.x*gridDim.x;
 	int totalSize = numRows*numCols;
 	if (index < totalSize) {
 		T value = d_in[index];
-		if (static_cast<int>(value) > upper) {
+		if (static_cast<int>(value) >= upper) {
 			d_out[index] = max;
 		}
-		else if (static_cast<int>(value) < lower) {
+		else if (static_cast<int>(value) <= lower) {
 			d_out[index] = static_cast<T>(0);
 		}
 		else {
@@ -799,6 +899,126 @@ namespace gimage {
 		return out;
 	}
 
+	void GIMAGE_EXPORT add(Array& T1, Array& T2, Array& output) {
+		int numRows = T1.rows;
+		int numCols = T1.cols;
+		assert(T1.getType() == T2.getType() && T1.getType() == output.getType());
+		assert(output.rows == numRows && output.cols == numCols && T2.rows == numRows && T2.cols == numCols);
+
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		//get max threads and threads per block.
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		dim3 grid_size = getGridSize(block_size, numRows, numCols);
+
+		T1.gpuAlloc();
+		T2.gpuAlloc();
+		output.gpuAlloc();
+		T1.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		T2.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		switch (T1.getType()) {
+		case gimage::Type::UINT16: {
+			uint16_t* d_T1 = static_cast<uint16_t*>(T1.deviceData());
+			uint16_t* d_T2 = static_cast<uint16_t*>(T2.deviceData());
+			uint16_t* d_out = static_cast<uint16_t*>(output.deviceData());
+			cudaAdd << <grid_size, block_size >> >(d_T1, d_T2, d_out, numRows, numCols);
+		}
+		}
+
+		output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+		T1.gpuFree();
+		T2.gpuFree();
+		output.gpuFree();
+	}
+
+	void GIMAGE_EXPORT subtract(Array& T1, Array& T2, Array& output) {
+		int numRows = T1.rows;
+		int numCols = T1.cols;
+		assert(T1.getType() == T2.getType() && T1.getType() == output.getType());
+		assert(output.rows == numRows && output.cols == numCols && T2.rows == numRows && T2.cols == numCols);
+
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		//get max threads and threads per block.
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		dim3 grid_size = getGridSize(block_size, numRows, numCols);
+
+		T1.gpuAlloc();
+		T2.gpuAlloc();
+		output.gpuAlloc();
+		T1.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		T2.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		switch (T1.getType()) {
+		case gimage::Type::UINT16: {
+			uint16_t* d_T1 = static_cast<uint16_t*>(T1.deviceData());
+			uint16_t* d_T2 = static_cast<uint16_t*>(T2.deviceData());
+			uint16_t* d_out = static_cast<uint16_t*>(output.deviceData());
+			cudaSubtract << <grid_size, block_size >> >(d_T1, d_T2, d_out, numRows, numCols);
+		}
+		}
+
+		output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+		T1.gpuFree();
+		T2.gpuFree();
+		output.gpuFree();
+	}
+
+	void GIMAGE_EXPORT threshold(Array& input, Array& output, int imageThresh) {
+		int numRows = input.rows;
+		int numCols = input.cols;
+		assert(input.getType() == output.getType());
+		assert(output.rows == numRows && output.cols == numCols);
+
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		//get max threads and threads per block.
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		dim3 grid_size = getGridSize(block_size, numRows, numCols);
+
+		input.gpuAlloc();
+		output.gpuAlloc();
+
+		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		output.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		switch (input.getType()) {
+		case gimage::Type::UINT16: {
+			uint16_t* d_in = static_cast<uint16_t*>(input.deviceData());
+			uint16_t* d_out = static_cast<uint16_t*>(output.deviceData());
+			uint16_t max = std::numeric_limits<uint16_t>::max();
+			thresh << <grid_size, block_size >> >(d_in, d_out, static_cast<uint16_t>(imageThresh), max, numRows, numCols);
+		}
+			break;
+			//TODO: Add other types.
+		}
+
+		output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+
+		//clean up.
+		input.gpuFree();
+		output.gpuFree();
+	}
+
 	/**
 	* Converts a color image to a grayscale image.
 	* @param
@@ -983,6 +1203,80 @@ namespace gimage {
 		delete[] h_filter;	
 	}
 
+	void GIMAGE_EXPORT laplacianOfGaussian(Array& input, DoubleArray& output, float sigma, int numRows, int numCols, int logSize) {
+
+		//select the device
+		int device = selectDevice();
+		checkCudaErrors(cudaSetDevice(device));
+		struct cudaDeviceProp properties;
+		cudaGetDeviceProperties(&properties, device);
+		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
+		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+
+		//specify block size. 
+		dim3 block_size(threadsPerBlock, threadsPerBlock);
+		/*
+		* Specify the grid size for the GPU.
+		* Make it generalized, so that the size of grid changes according to the input image size
+		*/
+		dim3 grid_size = getGridSize(block_size, numRows, numCols);
+
+		double *LoGKernel = new double[logSize*logSize];
+		double filterSum = 0.f;
+		double sigmaSq = powf(sigma, 2.0f);
+		double sigmaFourth = powf(sigma, 4.0f);
+		for (int r = -logSize / 2; r <= logSize / 2; ++r) {
+			for (int c = -logSize / 2; c <= logSize / 2; ++c) {
+				double ySq = powf(r, 2.0);
+				double xSq = powf(c, 2.0);
+				double quo = (xSq + ySq) / (2 * sigmaSq);
+				//from http://homepages.inf.ed.ac.uk/rbf/HIPR2/log.htm compute the laplacian of a gaussian so we convolve once for
+				//a second derivative filter.
+				double filterValue = (-1.0 / (PI*sigmaFourth))*(1.0 - quo) * expf(-1.0 * quo);
+				LoGKernel[(r + logSize / 2) * logSize + c + logSize / 2] = filterValue;
+				filterSum += filterValue;
+			}
+		}
+
+		double* d_kernel;
+		checkCudaErrors(cudaAlloc(d_kernel, sizeof(double)*logSize*logSize));
+		checkCudaErrors(cudaMemcpy(d_kernel, LoGKernel, sizeof(double)*logSize*logSize, cudaMemcpyHostToDevice));
+
+		input.gpuAlloc();
+		input.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+		output.gpuAlloc();
+		output.memcpy(MemcpyDirection::HOST_TO_DEVICE);
+
+		double* out = static_cast<double*>(output.deviceData());
+		switch (input.getType()) {
+		case gimage::Type::UINT16: {
+			uint16_t *indata = static_cast<uint16_t*>(input.deviceData());
+			convolve << <grid_size, block_size >> >(indata, out, d_kernel, numRows, numCols, logSize);
+		}
+			break;
+		case gimage::Type::UINT8:{
+			uint8_t *indata = static_cast<uint8_t*>(input.deviceData());
+			convolve << <grid_size, block_size >> >(indata, out, d_kernel, numRows, numCols, logSize);
+		}
+			break;
+		case gimage::Type::DOUBLE: {
+			double *indata = static_cast<double*>(input.deviceData());
+			convolve << <grid_size, block_size >> >(indata, out, d_kernel, numRows, numCols, logSize);
+		}
+			break;
+		}
+		
+		//copy result back to host. 
+		output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
+		//free memory.
+		input.gpuFree();
+		output.gpuFree();
+		//free gpu kernel.
+		checkCudaErrors(cudaFree(d_kernel));
+		//free cpu kernel.
+		delete[] LoGKernel;
+	}
+
 	/**
 	* Performs the look up table method of window and leveling on the given image and stores the result in out.
 	* @param input the input image.
@@ -1135,7 +1429,7 @@ namespace gimage {
 			case Type::UINT16:
 				gimage::ArrayUint16 blurred(numRows, numCols);
 				//run gaussian blur first. 
-				gaussianBlur(input, blurred, sigma, numRows, numCols, 5);
+				gaussianBlur(input, blurred, sigma, numRows, numCols, 7);
 				uint16_t *d_gradient;
 				
 				//allocate all our arrays. 
@@ -1167,34 +1461,6 @@ namespace gimage {
 				output.gpuAlloc();
 				d_out = static_cast<uint16_t*>(output.deviceData());
 
-				//create laplacian of gaussian kernel.
-				int blurSize = 7;
-				float sigma = 1.1f;
-				float *LoGKernel = new float[blurSize*blurSize];
-				float filterSum = 0.f;
-				float sigmaSq = powf(sigma, 2.0f);
-				float sigmaFourth = powf(sigma, 4.0f);
-				for (int r = -blurSize / 2; r <= blurSize / 2; ++r) {
-					for (int c = -blurSize / 2; c <= blurSize / 2; ++c) {
-						float ySq = powf(r, 2.0);
-						float xSq = powf(c, 2.0);
-						float quo = (xSq + ySq) / (2 * sigmaSq);
-						//from http://homepages.inf.ed.ac.uk/rbf/HIPR2/log.htm compute the laplacian of a gaussian so we convolve once for
-						//a second derivative filter.
-						float filterValue = (-1 / (PI*sigmaFourth))*(1 - quo) * expf(-1 * quo);
-						LoGKernel[(r + blurSize / 2) * blurSize + c + blurSize / 2] = filterValue;
-						filterSum += filterValue;
-					}
-				}
-
-				float* d_kernel;
-				float* convOut = new float[numRows*numCols];
-				float* dConvOut;
-				checkCudaErrors(cudaMalloc((void**)&dConvOut, sizeof(float)*numRows*numCols));
-				checkCudaErrors(cudaMalloc((void**)&d_kernel, sizeof(float)*blurSize*blurSize));
-
-				checkCudaErrors(cudaMemcpy(d_kernel, LoGKernel, sizeof(float)*blurSize*blurSize, cudaMemcpyHostToDevice));
-
 				//create non maximum suppression output.
 				ArrayUint16 nonMaxOut(output.rows, output.cols);
 				//allocate on GPU.
@@ -1205,46 +1471,158 @@ namespace gimage {
 				//set output to zeros.
 				checkCudaErrors(cudaMemset(d_out, 0, output.totalSize()));
 				timer.Start();
-				//perform non maximum suppression using second derivative. Need to 
-				//find zero crossings in the resulting dConvOut
-				convolve << <grid_size, block_size >> >(d_in, dConvOut, d_kernel, numRows, numCols, blurSize);
+				//perform non maximum suppression
+				nonMaximumSuppression << <grid_size, block_size >> >(d_gradient, d_theta, d_nMax_out, numRows, numCols);
 				timer.Stop();
 				float nonMaxMs = timer.Elapsed();
 #if PRINT_INFO
-				printf("Convolution kernel took %f ms\n", nonMaxMs);
+				printf("Non-maximum suppression kernel took %f ms\n", nonMaxMs);
 #endif
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+			
+				//from  10504: Mestrado em Engenharia Informática presentation.
 
-				//copy data back to convOut
-				checkCudaErrors(cudaMemcpy(convOut, dConvOut, sizeof(float)*numRows*numCols, cudaMemcpyDeviceToHost));
-				//TODO: Find zero crossings.
-				
 				uint16_t max = std::numeric_limits<uint16_t>::max();
-				timer.Start();
-				hysteresisThresholding << <grid_size, block_size >> >(d_nMax_out, d_out, d_theta, upperThresh, lowerThresh, numRows, numCols, max);
-				timer.Stop();
-				float hysMs = timer.Elapsed();
-#if PRINT_INFO
-				printf("Thresholding kernel took %f ms\n", hysMs);
-#endif
+				uint16_t* thresh_low;
+				uint16_t* thresh_high;
+				checkCudaErrors(cudaAlloc(thresh_low, input.size()));
+				checkCudaErrors(cudaAlloc(thresh_high, input.size()));
+
+				//threshold the nonMax output with the lower threshold.
+				thresh << <grid_size, block_size >> >(d_nMax_out, thresh_low, static_cast<uint16_t>(lowerThresh), max, numRows, numCols);
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+				//threshold the nonMax output with the upper threshold.
+				thresh << <grid_size, block_size >> >(d_nMax_out, thresh_high, static_cast<uint16_t>(upperThresh), max, numRows, numCols);
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+				
+				//thresh low contains thresh high, so remove it by subtracting it. 
+				uint16_t* final_low;
+				checkCudaErrors(cudaAlloc(final_low, input.size()));
+				//remove the high inputs from the low.
+				cudaSubtract << <grid_size, block_size >> >(thresh_high, thresh_low, final_low, numRows, numCols);
 				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
+				//using final_low and thresh_high need to go through each "unvisited" non-zero pixel (p) in thresh_high and mark as valid pixels
+				//in output the weak pixels that are in final_low
+
+				//create CPU arrays.
+				uint16_t* high = new uint16_t[input.size()]; //high thresh cpu array
+				uint16_t* low = new uint16_t[input.size()]; //low thresh cpu array
+				bool *visited = new bool[input.size()]; //visited pixels in high
+				bool *validPix = new bool[input.size()]; //valid pixels in low
+				int *theta = new int[input.size()]; //cpu gradient direction array
+
+				//initialize to false.
+				for (int i = 0; i < input.size(); i++) {
+					visited[i] = false;
+					validPix[i] = false;
+				}
+				
+				//copy data from GPU.
+				checkCudaErrors(cudaMemcpy(theta, d_theta, input.totalSize(), cudaMemcpyDeviceToHost));
+				checkCudaErrors(cudaMemcpy(high, thresh_high, input.totalSize(), cudaMemcpyDeviceToHost));
+				checkCudaErrors(cudaMemcpy(low, final_low, input.totalSize(), cudaMemcpyDeviceToHost));
+
+				//loop through all pixels. 
+				for (int r = 0; r < numRows; r++) {
+					for (int c = 0; c < numCols; c++) {
+						
+						int index = r*numCols + c;
+						//check if value is greater than 0 and we haven't visited it.
+						if (high[index] > 0 && !visited[index]) {
+							//mark this point as visited.
+							visited[index] = true;
+							//create queue for BFS.
+							std::list<gPoint> queue;
+							gPoint p;
+							p.row = r;
+							p.col = c;
+							//push back the current point.
+							queue.push_back(p);
+							//get the current direction
+							int direction = theta[index];
+							//perform BFS.
+							while (!queue.empty()) {
+								//get the front point.
+								gPoint lp = queue.front();
+								//remove front point.
+								queue.pop_front();
+								//need to check adjacent pixels, this is an 8 pixel neighborhood. 
+								for (int rm = -1; rm <= 1; rm++) {
+									for (int cm = -1; cm <= 1; cm++) {
+										//don't check ourselves.
+										if (cm == 0 && rm == 0) continue;
+										//get new row and column. 
+										int newRow = p.row + rm;
+										int newCol = p.col + cm;
+										//now check for in bounds index
+										if (newRow >= 0 && newRow < numRows
+											&& newCol >= 0 && newCol < numCols) {
+											int newIndex = newRow*numCols + newCol;
+											//check if the low value is greater than 0. 
+											uint16_t lowVal = low[newIndex];
+											int newDir = theta[newIndex];
+											if (lowVal > 0 && !validPix[newIndex] && newDir == direction) {
+												//valid point, so set as valid and add it to the queue.
+												validPix[newIndex] = true;
+												gPoint newP;
+												newP.row = newRow;
+												newP.col = newCol;
+												queue.push_back(newP);
+											}
+										}
+									}
+								}
+							}
+						}
+						else {
+							visited[index] = true;
+						}
+					}
+				}
+
+				//suppress all invalid pixels these should be false edges at this point.
+				for (int i = 0; i < input.size(); i++) {
+					if (!validPix[i]) {
+						low[i] = 0;
+					}
+				}
+
+				//copy new low to gpu.
+				cudaMemcpy(thresh_low, low, input.totalSize(), cudaMemcpyHostToDevice);
+				//add the high and low. 
+				cudaAdd << <grid_size, block_size >> >(thresh_low, thresh_high, d_out, numRows, numCols);
+				cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+		
 				//copy result to gpu. 
-				checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), d_nMax_out, output.totalSize(), cudaMemcpyDeviceToHost));
+				//checkCudaErrors(cudaMemcpy(static_cast<uint16_t*>(output.hostData()), thresh_high, output.totalSize(), cudaMemcpyDeviceToHost));
+				//copy results back.
+				output.memcpy(MemcpyDirection::DEVICE_TO_HOST);
 
 				//free up used memory. 
 				input.gpuFree();
 				output.gpuFree();
 				nonMaxOut.gpuFree();
+				checkCudaErrors(cudaFree(final_low));
+				checkCudaErrors(cudaFree(thresh_low));
+				checkCudaErrors(cudaFree(thresh_high));
+
+
+				delete[] high;
+				delete[] low;
+				delete[] visited;
+				delete[] validPix;
 
 				checkCudaErrors(cudaFree(d_gradient));
-				checkCudaErrors(cudaFree(d_theta));
+				
 				break;
 		}
 		
 		//free our gpu filters. 
 		checkCudaErrors(cudaFree(d_kgx));
 		checkCudaErrors(cudaFree(d_kgy));
+		//free the theta array.
+		checkCudaErrors(cudaFree(d_theta));
 
 		//free cpu memory. 
 		delete[] k_gx;

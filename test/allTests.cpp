@@ -68,7 +68,7 @@ TEST(gimage, window_level_Test) {
 	cv::waitKey(0);
 }
 
-TEST(gimage, canny_test) {
+TEST(gimage, thresholdTest) {
 	cv::Mat input = cv::imread("test.tif", CV_16U);
 	gimage::ArrayUint16 rawImage(input.rows, input.cols);
 	gimage::ArrayUint16 out(input.rows, input.cols);
@@ -78,11 +78,38 @@ TEST(gimage, canny_test) {
 			rawImage.setData<uint16_t>(i, j, value);
 		}
 	}
-	gimage::cannyEdgeDetector(rawImage, out, input.rows, input.cols, 1.4f, 50000, 55000);
+	int threshold = 40000;
+	gimage::threshold(rawImage, out, threshold);
 	cv::Mat result(input.rows, input.cols, CV_16U,
 		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
+	imshow("Threshold", result);
+}
+
+TEST(gimage, canny_test) {
+	cv::Mat input = cv::imread("geo_cal_image.tif", CV_16U);
+	gimage::ArrayUint16 rawImage(input.rows, input.cols);
+	gimage::ArrayUint16 out(input.rows, input.cols);
+	for (size_t i = 0; i < input.rows; ++i) {
+		for (size_t j = 0; j < input.cols; ++j){
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData<uint16_t>(i, j, value);
+		}
+	}
+	gimage::cannyEdgeDetector(rawImage, out, input.rows, input.cols, 1.2f, 25000, 34000);
+	cv::Mat result(input.rows, input.cols, CV_16U,
+		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
+	cv::Mat blur;
+	cv::Mat converted;
+	input.convertTo(converted, CV_8UC1, 1.0/256.0);
+	cv::GaussianBlur(converted, blur, cv::Size(5, 5), 1.4f);
+	cv::Mat edges;
+	cv::Canny(blur, edges, 100, 150);
 	cv::imshow("Input", input);
 	cv::imshow("Output", result);
+	cv::Mat dst;
+	dst = cv::Scalar::all(0);
+	converted.copyTo(dst, edges);
+	cv::imshow("Reference", dst);
 	cv::waitKey(0);
 }
 
