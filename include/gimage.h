@@ -11,6 +11,15 @@
 
 namespace gimage {
 
+	struct Size {
+		int width = 0;
+		int height = 0;
+	};
+
+	enum class InterpType {
+		BILINEAR
+	};
+
 	/**
 	* Adds two arrays together. 
 	* @param T1 the first array.
@@ -26,6 +35,14 @@ namespace gimage {
 	* @param output the result of the subtraction.
 	*/
 	void GIMAGE_EXPORT subtract(Array& T1, Array& T2, Array& output);
+
+	/**
+	* Resizes the input array to the new size of the output array.
+	* @param input the input array to resize
+	* @param output the output array, this will define the size of the output array.
+	* @param type the interpolation algorithm to use.
+	*/
+	void GIMAGE_EXPORT resize(Array& input, Array& output, InterpType type);
 
 	/**
 	* Converts an 8 bit RGB image to grayscale. 
