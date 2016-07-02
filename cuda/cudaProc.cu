@@ -41,6 +41,66 @@ cudaError_t cudaAlloc(T*& d_p, size_t elements)
 }
 
 /**
+* Performs bilinear interpolation on an input image. Stores the output in output.
+* @param input the input data.
+* @param output the output data.
+* @param inputSize the size of the input.
+* @param outputSize the size of the output.
+*/
+template<typename T>
+void bilinearInterpolation(T* input, T* output, gimage::Size inputSize, gimage::Size outputSize) {
+
+	float widthRatio = (float) inputSize.width / (float) outputSize.width;
+	float heightRatio = (float)inputSize.height / (float)outputSize.height;
+
+	for (int r = 0; r < outputSize.height; r++) {
+		for (int c = 0; c < outputSize.width; c++) {
+			float y = heightRatio *r; // row
+			float x = widthRatio * c; // col
+			int x1 = (int)floor(x);
+			int y1 = (int)float(y);
+			int x2 = x1 + 1;
+			int y2 = y1 + 1;
+			int stride = inputSize.width;
+			T p1 = getValue(input, x1, y1, stride); 
+			T p2 = getValue(input, x2, y1, stride); //over one column
+			T p3 = getValue(input, x1, y2, stride); //same column, down row
+			T p4 = getValue(input, x2, y2, stride); //over column and over row.
+			
+			float x2x = x2 - x;
+			float x2x1 = x2 - x1;
+			float xx1 = x - x1;
+			float yy1 = y - y1;
+			float y2y = y2 - y;
+			float y2y1 = y2 - y1;
+
+			//interpolate horizontally first.
+			float interpH1 = (x2x / x2x1)*p1 + (xx1 / x2x1)*p2;
+			float interpH2 = (x2x / x2x1) * p3 + (xx1/x2x1)*p4;
+
+			float interpV = (y2y / y2y1)*interpH1 + (yy1 / y2y1)*interpH2;
+
+			T out = static_cast<T>(interpV);
+			output[c + r*outputSize.height] = out;
+		}
+	}
+}
+
+/**
+* Helper function to get data in 2D from a 1D array.
+* @param data the data to read.
+* @param x the x point (the column)
+* @param y the y point (the row)
+* @param stride of array (the width).
+* @return T the value of the array at (x, y).
+*/
+template<typename T>
+T getValue(T* data, int x, int y, int stride) {
+	//analogous to column + row*width. Row is height column is width.
+	return data[x + y*stride];
+}
+
+/**
 * Helper function to select the proper CUDA device based on memory.
 * @return int the device index to use.
 */
@@ -975,6 +1035,29 @@ namespace gimage {
 		T1.gpuFree();
 		T2.gpuFree();
 		output.gpuFree();
+	}
+
+	void GIMAGE_EXPORT resize(Array& input, Array& output, InterpType type) {
+		gimage::Type t = input.getType();
+		assert(t == output.getType());
+		gimage::Size inputSize, outputSize;
+		inputSize.height = input.rows;
+		inputSize.width = input.cols;
+		outputSize.height = output.rows;
+		outputSize.width = output.cols;
+		switch (type) {
+		case InterpType::AUTO:
+			switch (t) {
+			case Type::UINT16:
+				uint16_t* inputData = static_cast<uint16_t*>(input.hostData());
+				uint16_t* outputData = static_cast<uint16_t*>(output.hostData());
+				bilinearInterpolation(inputData, outputData, inputSize, outputSize);
+				break;
+			}
+			break;
+		case InterpType::BILINEAR:
+			break;
+		}
 	}
 
 	void GIMAGE_EXPORT threshold(Array& input, Array& output, int imageThresh) {

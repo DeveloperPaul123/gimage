@@ -17,6 +17,7 @@ namespace gimage {
 	};
 
 	enum class InterpType {
+		AUTO,
 		BILINEAR
 	};
 
@@ -42,7 +43,7 @@ namespace gimage {
 	* @param output the output array, this will define the size of the output array.
 	* @param type the interpolation algorithm to use.
 	*/
-	void GIMAGE_EXPORT resize(Array& input, Array& output, InterpType type);
+	void GIMAGE_EXPORT resize(Array& input, Array& output, InterpType type = InterpType::AUTO);
 
 	/**
 	* Converts an 8 bit RGB image to grayscale. 
