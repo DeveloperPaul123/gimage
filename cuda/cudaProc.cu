@@ -41,6 +41,30 @@ cudaError_t cudaAlloc(T*& d_p, size_t elements)
 }
 
 /**
+* Performs nearest neighbor interpolation on the input image. Stores the output in output.
+* @param input the input data
+* @param output the output data
+* @param inputSize the size of the input image
+* @param outputSize the size of the output image
+*/
+template<typename T>
+void nearestNeighborInterpolation(T* input, T* output, gimage::Size inputSize, gimage::Size outputSize) {
+	float widthRatio = (float)inputSize.width / (float)outputSize.width;
+	float heightRatio = (float)inputSize.height / (float)outputSize.height;
+
+	for (int r = 0; r < outputSize.height; r++) {
+		for (int c = 0; c < outputSize.width; c++) {
+			float y = heightRatio*r;
+			float x = widthRatio*c;
+			int x1 = (int)x;
+			int y1 = (int)y;
+			T out = getValue(input, x1, y1, inputSize.width);
+			output[c + r*outputSize.height] = out;
+		}
+	}
+}
+
+/**
 * Performs bilinear interpolation on an input image. Stores the output in output.
 * @param input the input data.
 * @param output the output data.
@@ -57,8 +81,8 @@ void bilinearInterpolation(T* input, T* output, gimage::Size inputSize, gimage::
 		for (int c = 0; c < outputSize.width; c++) {
 			float y = heightRatio *r; // row
 			float x = widthRatio * c; // col
-			int x1 = (int)floor(x);
-			int y1 = (int)float(y);
+			int x1 = (int)x;
+			int y1 = (int)y;
 			int x2 = x1 + 1;
 			int y2 = y1 + 1;
 			int stride = inputSize.width;
