@@ -1,6 +1,7 @@
 #include "gimage.h"
 #include "array.h"
 #include "timer.h"
+#include "logger.h"
 #include <list>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -11,6 +12,69 @@
 #define PI 3.14159265359
 #define PRINT_INFO 1
 #define checkCudaErrors(val) check( (val), #val, __FILE__, __LINE__)
+#define FTLOG //log to file
+
+class NullBuffer : public std::streambuf
+{
+public:
+	int overflow(int c) { return c; }
+};
+
+class NullStream : public std::ostream { 
+public: 
+	NullStream() : std::ostream(&m_sb) {} 
+private: 
+	NullBuffer m_sb; 
+};
+
+#if defined (FTLOG)
+#include <fstream>
+#else
+#include <iostream>
+#endif
+logger_t::logger_t()
+{}
+bool logger_t::is_activated = true;
+
+#if defined(TLOG)
+std::auto_ptr < std::ostream >
+logger_t::outstream_helper_ptr
+= std::auto_ptr < std::ostream >(
+new NullStream);
+std::ostream * logger_t::outstream = &std::cout;
+
+#elif defined (ETLOG)
+std::auto_ptr < std::ostream >
+logger_t::outstream_helper_ptr
+= std::auto_ptr < std::ostream >(
+new NullStream);
+std::ostream * logger_t::outstream = &std::cerr;
+
+#elif defined (FTLOG)
+std::auto_ptr < std::ostream >
+logger_t::outstream_helper_ptr
+= std::auto_ptr < std::ostream >(
+new std::ofstream("gimageLog.out", std::ios::trunc));
+std::ostream * logger_t::outstream
+= outstream_helper_ptr.get();
+
+// here is a place for user defined output stream
+// and compiler flag
+
+#else
+std::auto_ptr < std::ostream >
+logger_t::outstream_helper_ptr
+= std::auto_ptr < std::ostream >(
+new NullStream);
+std::ostream * logger_t::outstream
+= outstream_helper_ptr.get();
+#endif
+
+logger_t & logger()
+{
+	static logger_t * ans = new logger_t();
+	return *ans;
+}
 
 struct gPoint {
 	int row = 0;
@@ -1184,7 +1248,10 @@ namespace gimage {
 		checkCudaErrors(cudaGetLastError()); 
 		//measure how long the kernel took
 		float ms = timer.Elapsed();
-
+		//log the results. 
+		char printInfo[50];
+		sprintf(printInfo, "RGB to gray conversion time: %f ms", ms);
+		LOG(printInfo);
 #if PRINT_INFO
 		printf("RGB to gray kernel took %f ms.\n", ms);
 #endif
@@ -1252,6 +1319,9 @@ namespace gimage {
 
 		int maxThreadsPerBlock = properties.maxThreadsPerBlock;
 		int threadsPerBlock = std::sqrt(maxThreadsPerBlock);
+		char printInfo[50];
+		sprintf(printInfo, "GPU Selected: %s", properties.name);
+		LOG(printInfo);
 #if PRINT_INFO
 		std::cout << "GPU: " << properties.name << std::endl;
 		std::cout << "Using " << properties.multiProcessorCount << " multiprocessors" << std::endl;
@@ -1293,6 +1363,9 @@ namespace gimage {
 		}
 
 		float ms = timer.Elapsed();
+		char timeInfo[50];
+		sprintf(timeInfo, "Gausing Blur Execution Time: %f ms", ms);
+		LOG(timeInfo);
 #if PRINT_INFO
 		printf("Kernel took %f ms\n", ms);
 #endif
