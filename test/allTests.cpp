@@ -157,6 +157,50 @@ TEST(gimage, resize_test_larger) {
 	cv::waitKey(0);
 }
 
+TEST(gimage, resize_test_bicubic) {
+	cv::Mat input = cv::imread("test.tif", CV_16U);
+	gimage::ArrayUint16 rawImage(input.rows, input.cols);
+	int newRows = input.rows + 200;
+	int newCols = input.cols + 200;
+	gimage::ArrayUint16 out(newRows, newCols);
+	for (size_t i = 0; i < input.rows; ++i) {
+		for (size_t j = 0; j < input.cols; ++j){
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData<uint16_t>(i, j, value);
+		}
+	}
+
+	gimage::resize(rawImage, out, gimage::InterpType::BICUBIC);
+
+	imshow("Reference", input);
+	cv::Mat result(out.rows, out.cols, CV_16U,
+		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
+	imshow("Larger", result);
+	cv::waitKey(0);
+}
+
+TEST(gimage, resize_test_bilinear) {
+	cv::Mat input = cv::imread("test.tif", CV_16U);
+	gimage::ArrayUint16 rawImage(input.rows, input.cols);
+	int newRows = input.rows + 200;
+	int newCols = input.cols + 200;
+	gimage::ArrayUint16 out(newRows, newCols);
+	for (size_t i = 0; i < input.rows; ++i) {
+		for (size_t j = 0; j < input.cols; ++j){
+			uint16_t value = input.at<uint16_t>(i, j);
+			rawImage.setData<uint16_t>(i, j, value);
+		}
+	}
+
+	gimage::resize(rawImage, out, gimage::InterpType::BILINEAR);
+
+	imshow("Reference", input);
+	cv::Mat result(out.rows, out.cols, CV_16U,
+		static_cast<uint16_t*>(out.hostData()), cv::Mat::AUTO_STEP);
+	imshow("Larger", result);
+	cv::waitKey(0);
+}
+
 TEST(gimage, rbg_to_gray_test) {
 	cv::Mat image = cv::imread("forrest.jpg", CV_LOAD_IMAGE_COLOR);
 	int numRows = image.rows;

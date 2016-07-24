@@ -5,8 +5,13 @@
 #include <memory> 
 #include <string>
 
+//Define a file name macro so the whole path to the file isn't printed in the log.
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
+/**
+* Logging class. Used in the log macros to save logging data
+* to a file or print it to a stream. 
+*/
 class GIMAGE_EXPORT logger_t
 {
 public:
@@ -14,17 +19,33 @@ public:
 	static std::auto_ptr < std::ostream >
 		outstream_helper_ptr;
 	static std::ostream * outstream;
-	logger_t(); private:
-		logger_t(const logger_t &);
-		logger_t & operator= (const logger_t &);
+	logger_t(); 
+private:
+	logger_t(const logger_t &);
+	logger_t & operator= (const logger_t &);
 };
 
 extern logger_t & logger();
 
-#define LOG(name)do {if (logger().is_activated ){\
-	 *logger().outstream << __FILENAME__ \
-	 << " [" << __LINE__ << "] : " << #name \
-	 << " = " << (name) << std::endl; } }while (false)
+#define LOG(name) do {\
+	if (logger().is_activated ){\
+		*logger().outstream << __FILENAME__ \
+		<< " [" << __LINE__ << "] : " << #name \
+		<< " = " << (name) << std::endl;\
+				}\
+} while (false)
+
+#define LOG_INFO(name) do {\
+	if(logger().is_activated) {\
+	*logger().outstream << __FILENAME__ \
+	<< " [" << __LINE__ << "] : " << (name) << std::endl;\
+		}\
+} while(false)
+
+#define LOG_VERBOSE(name) do {\
+	if(logger().is_activated) {\
+		*logger().outstream << (name) << std::endl;}\
+} while (false)
 
 namespace logger_n {
 	template < typename T1, typename T2, \
@@ -42,6 +63,7 @@ namespace logger_n {
 		}
 	}
 }
+
 #define LOG_FN(name) logger_n::put_debug_info ( \
 	logger(), __FILE__, __LINE__, #name, (name) )
 // place for user defined logger formating data

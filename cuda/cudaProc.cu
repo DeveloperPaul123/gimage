@@ -3,6 +3,7 @@
 #include "timer.h"
 #include "logger.h"
 #include <list>
+#include <limits>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
@@ -13,6 +14,26 @@
 #define PRINT_INFO 1
 #define checkCudaErrors(val) check( (val), #val, __FILE__, __LINE__)
 #define FTLOG //log to file
+
+/**
+* Saturate values to make them valid within an image.
+*/
+template<typename T>
+T saturate_cast(T &value) {
+	T max = std::numeric_limits<T>::max();
+	T min = 0;
+	T out;
+	if (value < min) {
+		out = min;
+	}
+	else if (value > max) {
+		out = max;
+	}
+	else {
+		out = value;
+	}
+	return out;
+}
 
 class NullBuffer : public std::streambuf
 {
@@ -87,7 +108,11 @@ struct gPoint {
 template<typename T>
 void check(T err, const char* const func, const char* const file, const int line) {
 	if (err != cudaSuccess) {
-		std::cerr << "CUDA error at: " << file << ":" << line << std::endl;
+		char errorMessage[100];
+		sprintf("CUDA Error - Function: %s File: %s Line: %d", func, file, line);
+		LOG_VERBOSE(errorMessage);
+		LOG_VERBOSE(cudaGetErrorString(err));
+		std::cerr << errorMessage << std::endl;
 		std::cerr << cudaGetErrorString(err) << " " << func << std::endl;
 		exit(1);
 	}
@@ -118,8 +143,8 @@ void nearestNeighborInterpolation(T* input, T* output, gimage::Size inputSize, g
 
 	for (int r = 0; r < outputSize.height; r++) {
 		for (int c = 0; c < outputSize.width; c++) {
-			float y = heightRatio*r;
-			float x = widthRatio*c;
+			float y = (heightRatio*r) - 0.5;
+			float x = (widthRatio*c) - 0.5;
 			int x1 = (int)x;
 			int y1 = (int)y;
 			T out = getValue(input, x1, y1, inputSize.width);
@@ -143,8 +168,8 @@ void bilinearInterpolation(T* input, T* output, gimage::Size inputSize, gimage::
 
 	for (int r = 0; r < outputSize.height; r++) {
 		for (int c = 0; c < outputSize.width; c++) {
-			float y = heightRatio *r; // row
-			float x = widthRatio * c; // col
+			float y = (heightRatio *r) - 0.5; // row
+			float x = (widthRatio * c) - 0.5; // col
 			int x1 = (int)x;
 			int y1 = (int)y;
 			int x2 = x1 + 1;
@@ -172,6 +197,85 @@ void bilinearInterpolation(T* input, T* output, gimage::Size inputSize, gimage::
 			output[c + r*outputSize.height] = out;
 		}
 	}
+}
+
+/**
+* Used to carry out the cubic interpolation.
+* @param A 
+* @param B
+* @param C
+* @param D
+* @param t should be between 0 and 1.0
+*/
+float CubicHermite(float A, float B, float C, float D, float t)
+{
+	float a = -A / 2.0f + (3.0f*B) / 2.0f - (3.0f*C) / 2.0f + D / 2.0f;
+	float b = A - (5.0f*B) / 2.0f + 2.0f*C - D / 2.0f;
+	float c = -A / 2.0f + C / 2.0f;
+	float d = B;
+
+	return a*t*t*t + b*t*t + c*t + d;
+}
+
+/**
+* Performs bicubic interpolation on the input image and stores the result in the output array.
+* @param input the input data.
+* @param output the output data.
+* @param inputSize the size of the input image.
+* @param outputSize the size of the output image. 
+*/
+template<typename T>
+void bicubicInterpolation(T* input, T* output, gimage::Size inputSize, gimage::Size outSize) {
+
+	float widthRatio = (float)inputSize.width / (float)outSize.width;
+	float heightRatio = (float)inputSize.height / (float)outSize.height;
+	int stride = inputSize.width;
+
+	for (int r = 0; r < outSize.height; r++) {
+		for (int c = 0; c < outSize.width; c++) {
+			float y = (heightRatio *r) - 0.5; // row
+			float x = (widthRatio * c) - 0.5; // col
+
+			int yint = int(y);
+			int xint = int(x);
+
+			float yfract = y - floor(y);
+			float xfract = x - floor(x);
+
+			//1st row
+			auto p00 = getValue(input, xint - 1, yint - 1, stride);
+			auto p10 = getValue(input, xint + 0, yint - 1, stride);
+			auto p20 = getValue(input, xint + 1, yint - 1, stride);
+			auto p30 = getValue(input, xint + 2, yint - 1, stride);
+
+			// 2nd row
+			auto p01 = getValue(input, xint - 1, yint + 0, stride);
+			auto p11 = getValue(input, xint + 0, yint + 0, stride);
+			auto p21 = getValue(input, xint + 1, yint + 0, stride);
+			auto p31 = getValue(input, xint + 2, yint + 0, stride);
+
+			// 3rd row
+			auto p02 = getValue(input, xint - 1, yint + 1, stride);
+			auto p12 = getValue(input, xint + 0, yint + 1, stride);
+			auto p22 = getValue(input, xint + 1, yint + 1, stride);
+			auto p32 = getValue(input, xint + 2, yint + 1, stride);
+
+			// 4th row
+			auto p03 = getValue(input, xint - 1, yint + 2, stride);
+			auto p13 = getValue(input, xint + 0, yint + 2, stride);
+			auto p23 = getValue(input, xint + 1, yint + 2, stride);
+			auto p33 = getValue(input, xint + 2, yint + 2, stride);
+
+			float col0 = CubicHermite(p00, p10, p20, p30, xfract);
+			float col1 = CubicHermite(p01, p11, p21, p31, xfract);
+			float col2 = CubicHermite(p02, p12, p22, p32, xfract);
+			float col3 = CubicHermite(p03, p13, p23, p33, xfract);
+			float value = CubicHermite(col0, col1, col2, col3, yfract);
+			T outVal = static_cast<T>(value);
+			output[c + r*outSize.height] = saturate_cast<T>(outVal);
+		}
+	}
+
 }
 
 /**
@@ -234,6 +338,13 @@ dim3 getGridSize(dim3 blockSize, int numRows, int numCols) {
 	return grid_size;
 }
 
+/**
+* Adds two arrays together.
+* @param d_T1 the first input image.
+* @param d_T2 the second input image.
+* @param numRows the number of rows in the image.
+* @param numCols the number of cols in the image. 
+*/
 template<typename T>
 __global__ void cudaAdd(T* d_T1, T* d_T2, T* d_out, int numRows, int numCols) {
 	//get row and column in blcok
@@ -247,6 +358,13 @@ __global__ void cudaAdd(T* d_T1, T* d_T2, T* d_out, int numRows, int numCols) {
 	}
 }
 
+/**
+* Subtracts two arrays from each other. This will subtract d_T1 from d_T2.
+* @param d_T1 first array
+* @param d_T2 second array
+* @param numRows the number of rows in the images
+* @param numCols the number of columns in the images. 
+*/
 template<typename T>
 __global__ void cudaSubtract(T* d_T1, T* d_T2, T* d_out, int numRows, int numCols) {
 	//get row and column in blcok
@@ -688,7 +806,7 @@ __global__ void houghCircles(T* d_in, T* d_accumalator, int radius, int numRows,
 }
 
 /**
-* Namespace for all gimage functions.
+* Namespace for all gimage functions and classes. 
 */
 namespace gimage {
 
@@ -741,7 +859,6 @@ namespace gimage {
 					other.at<double>(r, c));
 			}
 		}
-
 		return out;
 	}
 
@@ -1127,6 +1244,9 @@ namespace gimage {
 
 	void GIMAGE_EXPORT resize(Array& input, Array& output, InterpType type) {
 		gimage::Type t = input.getType();
+		LOG_INFO("Resizing image.");
+		char log[50];
+		LOG_INFO(std::underlying_type<gimage::Type>::type(t));
 		assert(t == output.getType());
 		gimage::Size inputSize, outputSize;
 		inputSize.height = input.rows;
@@ -1135,6 +1255,26 @@ namespace gimage {
 		outputSize.width = output.cols;
 		switch (type) {
 		case InterpType::AUTO:
+			LOG_INFO("Interpolation type: Automatic");
+			switch (t) {
+			case Type::UINT16:
+				uint16_t* inputData = static_cast<uint16_t*>(input.hostData());
+				uint16_t* outputData = static_cast<uint16_t*>(output.hostData());
+				if (inputSize.width > outputSize.width && inputSize.height > outputSize.height) {
+					LOG_INFO("Creating smaller image using nearest neighbor interpolation.");
+					//shrinking the image, so nearest neighbor should be fine.
+					nearestNeighborInterpolation(inputData, outputData, inputSize, outputSize);
+				}
+				else {
+					LOG_INFO("Creating larger image using bilinear interpolation.");
+					//scaling up, so using bilinear interpolation by default.
+					bilinearInterpolation(inputData, outputData, inputSize, outputSize);
+				}
+				break;
+			}
+			break;
+		case InterpType::BILINEAR:
+			LOG_INFO("Interpolation type: Bilinear");
 			switch (t) {
 			case Type::UINT16:
 				uint16_t* inputData = static_cast<uint16_t*>(input.hostData());
@@ -1143,7 +1283,15 @@ namespace gimage {
 				break;
 			}
 			break;
-		case InterpType::BILINEAR:
+
+		case InterpType::BICUBIC:
+			LOG_INFO("Interpolation type: Bicubic");
+			switch (t) {
+			case Type::UINT16:
+				uint16_t* inputData = static_cast<uint16_t*>(input.hostData());
+				uint16_t* outputData = static_cast<uint16_t*>(output.hostData());
+				bicubicInterpolation(inputData, outputData, inputSize, outputSize);
+			}
 			break;
 		}
 	}
@@ -1276,6 +1424,7 @@ namespace gimage {
 	void GIMAGE_EXPORT gaussianBlur(Array& input, Array& output, float sigma, int numRows, int numCols, int blurSize) {
 		//blur size must be odd. 
 		assert(blurSize % 2 == 1);
+		LOG_INFO("Performing gaussian blur.");
 		//first calculate the filter. 
 		float *h_filter = new float[blurSize*blurSize];
 		float filterSum = 0.f;

@@ -11,14 +11,21 @@
 
 namespace gimage {
 
+	/**
+	* Simple size container. 
+	*/
 	struct Size {
 		int width = 0;
 		int height = 0;
 	};
 
+	/**
+	* Interpolation type for use with image resizing.
+	*/
 	enum class InterpType {
 		AUTO,
-		BILINEAR
+		BILINEAR,
+		BICUBIC
 	};
 
 	/**
