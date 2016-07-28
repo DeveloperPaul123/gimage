@@ -1,0 +1,5 @@
+
+#cmake package config
+set (@gimage_PACKAGE_NAME@_INCLUDE_DIR "@gimage_INCLUDE_DIR@")
+set (@gimage_PACKAGE_NAME@_LIBRARY_DIR "@gimage_LIBRARY_DIR@")
+set (@gimage_PACKAGE_NAME@_DEBUG_LIBRARY_DIR "@gimage_DEBUG_LIBRARY_DIR@")
